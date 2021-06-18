@@ -149,8 +149,8 @@ def tf_repositories(path_prefix = "", tf_repo_name = ""):
         sha256 = "ebb383078fa8f81c24310e73984a0d9e759eb9febe73887956953824f780fc32",
         strip_prefix = "oneDNN-2.2.4",
         urls = [
-            "https://storage.googleapis.com/mirror.tensorflow.org/github.com/oneapi-src/oneDNN/archive/v2.2.4.tar.gz",
             "https://github.com/oneapi-src/oneDNN/archive/v2.2.4.tar.gz",
+            "https://storage.googleapis.com/mirror.tensorflow.org/github.com/oneapi-src/oneDNN/archive/v2.2.4.tar.gz",
         ],
     )
 
