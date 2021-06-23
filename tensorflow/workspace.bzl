@@ -273,12 +273,12 @@ def tf_repositories(path_prefix = "", tf_repo_name = ""):
     tf_http_archive(
         name = "org_sqlite",
         build_file = clean_dep("//third_party:sqlite.BUILD"),
-	sha256 = "b34f4c0c0eefad9a7e515c030c18702e477f4ef7d8ade6142bdab8011b487ac6",
-	strip_prefix = "sqlite-amalgamation-3330000",
+        sha256 = "b49409ef123e193e719e2536f9b795482a69e61a9cc728933739b9024f035061",
+        strip_prefix = "sqlite-amalgamation-3350500",
         system_build_file = clean_dep("//third_party/systemlibs:sqlite.BUILD"),
         urls = [
-	    "https://storage.googleapis.com/mirror.tensorflow.org/www.sqlite.org/2020/sqlite-amalgamation-3330000.zip",
-	    "https://www.sqlite.org/2020/sqlite-amalgamation-3330000.zip",
+            "https://storage.googleapis.com/mirror.tensorflow.org/www.sqlite.org/2021/sqlite-amalgamation-3350500.zip",
+            "https://www.sqlite.org/2021/sqlite-amalgamation-3350500.zip",
         ],
     )
 
@@ -499,12 +499,12 @@ def tf_repositories(path_prefix = "", tf_repo_name = ""):
     tf_http_archive(
         name = "curl",
         build_file = clean_dep("//third_party:curl.BUILD"),
-        sha256 = "59ef1f73070de67b87032c72ee6037cedae71dcb1d7ef2d7f59487704aec069d",
-        strip_prefix = "curl-7.71.1",
+        sha256 = "b0a3428acb60fa59044c4d0baae4e4fc09ae9af1d8a3aa84b2e3fbcd99841f77",
+        strip_prefix = "curl-7.77.0",
         system_build_file = clean_dep("//third_party/systemlibs:curl.BUILD"),
         urls = [
-	     "https://storage.googleapis.com/mirror.tensorflow.org/curl.haxx.se/download/curl-7.71.1.tar.gz",
-	     "https://curl.haxx.se/download/curl-7.71.1.tar.gz",
+            "https://storage.googleapis.com/mirror.tensorflow.org/curl.haxx.se/download/curl-7.77.0.tar.gz",
+            "https://curl.haxx.se/download/curl-7.77.0.tar.gz",
         ],
     )
 
