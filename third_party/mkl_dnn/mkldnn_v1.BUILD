@@ -3,6 +3,7 @@ exports_files(["LICENSE"])
 load(
     "@org_tensorflow//third_party/mkl:build_defs.bzl",
     "if_mkl",
+    "if_mkl_ml",
 )
 
 load(
@@ -14,16 +15,6 @@ load(
     "@org_tensorflow//third_party/mkl_dnn:build_defs.bzl",
     "if_mkl_open_source_only",
     "if_mkldnn_threadpool",
-)
-
-load(
-    "@org_tensorflow//tensorflow:tensorflow.bzl",
-    "tf_openmp_copts",
-)
-
-load(
-    "@org_tensorflow//third_party/mkl:build_defs.bzl",
-    "if_mkl_ml",
 )
 
 load(
@@ -68,6 +59,7 @@ template_rule(
     src = "include/oneapi/dnnl/dnnl_config.h.in",
     out = "include/oneapi/dnnl/dnnl_config.h",
     substitutions = select({
+        "@org_tensorflow//third_party/mkl_dnn:build_with_mkldnn_threadpool": _DNNL_RUNTIME_THREADPOOL,
         "@org_tensorflow//third_party/mkl:build_with_mkl": _DNNL_RUNTIME_OMP,
         "//conditions:default": _DNNL_RUNTIME_THREADPOOL,
     }),
