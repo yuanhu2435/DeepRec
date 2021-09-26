@@ -29,6 +29,7 @@ limitations under the License.
 #include <unordered_set>
 #include <utility>
 #include <vector>
+#include <fstream>
 
 #include "tensorflow/core/common_runtime/function.h"
 #include "tensorflow/core/common_runtime/optimization_registry.h"
@@ -40,6 +41,7 @@ limitations under the License.
 #include "tensorflow/core/graph/node_builder.h"
 #include "tensorflow/core/lib/core/status.h"
 #include "tensorflow/core/lib/gtl/array_slice.h"
+#include "tensorflow/core/lib/io/path.h"
 #include "tensorflow/core/lib/gtl/map_util.h"
 #include "tensorflow/core/lib/hash/hash.h"
 #include "tensorflow/core/platform/logging.h"
@@ -249,6 +251,7 @@ class MklLayoutRewritePass : public GraphOptimizationPass {
     csinfo_.batch_matmul_v2 = "BatchMatMulV2";
     csinfo_.bias_add = "BiasAdd";
     csinfo_.bias_add_grad = "BiasAddGrad";
+    csinfo_.cast = "Cast";
     csinfo_.concat = "Concat";
     csinfo_.concatv2 = "ConcatV2";
     csinfo_.conjugate_transpose = "ConjugateTranspose";
@@ -749,6 +752,15 @@ class MklLayoutRewritePass : public GraphOptimizationPass {
     minfo_.push_back({csinfo_.pad, csinfo_.fused_conv2d,
                       csinfo_.pad_with_fused_conv2d, GetPadOrFusedConv2D});
 
+    string enable_cast_fusion;
+    ReadStringFromEnvVar(
+        "TF_LAYOUT_PASS_GRAPH_CAST_FUSION", "", &enable_cast_fusion);
+    if (!enable_cast_fusion.empty()) {
+      minfo_.push_back({csinfo_.matmul, csinfo_.cast,
+                        mkl_op_registry::GetMklAutoCastOpName(csinfo_.matmul),
+                        GetCastWithMatmul});
+    }
+
     // The fusion patterns in "finfo_" that show up first will get applied
     // first, for example, graph "A->B->C-D" and finfo_ is {A->B->C to ABC,
     // A->B->C->D to ABCD}, since the first gets applied first, the final
@@ -944,6 +956,7 @@ class MklLayoutRewritePass : public GraphOptimizationPass {
     string batch_matmul_v2;
     string bias_add;
     string bias_add_grad;
+    string cast;
     string concat;
     string concatv2;
     string conjugate_transpose;
@@ -1144,6 +1157,7 @@ class MklLayoutRewritePass : public GraphOptimizationPass {
 
   // Helper function to merge different nodes
   Status MergeConv2DWithBiasAdd(std::unique_ptr<Graph>* g, Node* m, Node* n);
+  Status MergeMatmulWithCast(std::unique_ptr<Graph>* g, Node* m, Node* n);
   Status MergePadWithConv2D(std::unique_ptr<Graph>* g, Node* m, Node* n);
   Status MergeConv2DBackpropFilterWithBiasAddGrad(std::unique_ptr<Graph>* g,
                                                   Node* m, Node* n);
@@ -1300,6 +1314,28 @@ class MklLayoutRewritePass : public GraphOptimizationPass {
       VLOG(1) << "MklLayoutRewritePass: Could not find matching "
               << "Pad and _FusedConv2D node for merging. Input node: "
               << m->DebugString();
+    }
+
+    return n;
+  }
+
+  // Find Cast or Matmul node that can be merged with input node 'm'.
+  // If input 'm' is Cast, then check if there exists Matmul node that can
+  // be merged with 'm'.
+  static Node* GetCastWithMatmul(const Node* m) {
+    DCHECK(m);
+    DCHECK_EQ(m->type_string(), csinfo_.cast);
+
+    Node* n = nullptr;
+
+    if (m->out_edges().size() > 1) return n;
+
+    // If m is Cast, then Matmul is the input of Cast.
+    for (const Edge* e : m->in_edges()) {
+      if (e->src()->type_string() == csinfo_.matmul) {
+        n = e->src();
+        return n;
+      }
     }
 
     return n;
@@ -2012,6 +2048,8 @@ class MklLayoutRewritePass : public GraphOptimizationPass {
   // NOTE: names are alphabetically sorted.
   static void CopyAttrsAll(const Node* orig_node, NodeBuilder* nb,
                            bool change_format = false);
+  static void CopyAttrsMatMulCast(const Node* orig_node, NodeBuilder* nb,
+                                        bool change_format = false);
   static void CopyAttrsAllCheckConstFilter(const Node* orig_node,
                                            NodeBuilder* nb,
                                            bool change_format = false);
@@ -2608,6 +2646,27 @@ void MklLayoutRewritePass::CopyAttrsAll(const Node* orig_node, NodeBuilder* nb,
   }
 }
 
+void MklLayoutRewritePass::CopyAttrsMatMulCast(const Node* orig_node, NodeBuilder* nb,
+                                        bool change_format) {
+  string name;
+  AttrSlice attr_list(orig_node->def());
+
+  auto iter = attr_list.begin();
+  while (iter != attr_list.end()) {
+    name = iter->first;
+    auto attr = iter->second;
+    if (name != "T")
+      nb->Attr(name, attr);
+    else {
+      nb->Attr("TA", attr);
+      nb->Attr("TB", attr);
+      nb->Attr("TO", DT_FLOAT);
+    }
+    ++iter;
+  }
+
+}
+
 // Generic function to copy all attributes and check if filter is const.
 void MklLayoutRewritePass::CopyAttrsAllCheckConstFilter(const Node* orig_node,
                                                         NodeBuilder* nb,
@@ -3082,6 +3141,7 @@ Node* MklLayoutRewritePass::CheckForNodeMerge(const Node* a) const {
 
     // Shouldn't merge if a and b have different control edges.
     if (a_control_edges != b_control_edges) {
+      if (a->type_string() == csinfo_.cast) return b;
       continue;
     } else {
       // We found a match.
@@ -3253,6 +3313,146 @@ Status MklLayoutRewritePass::MergeConv2DWithBiasAdd(std::unique_ptr<Graph>* g,
   (*g)->RemoveNode(succ);
   (*g)->RemoveNode(pred);
 
+  return Status::OK();
+}
+
+Status MklLayoutRewritePass::MergeMatmulWithCast(std::unique_ptr<Graph>* g,
+                                                    Node* m, Node* n) {
+  // If 'm' is matmul, then 'n' is cast.
+  Node* matmul = m->type_string() == csinfo_.cast ? n : m;
+  Node* cast = m->type_string() == csinfo_.cast ? m : n;
+
+  // 1. Get all attributes from input nodes.
+  DataType T_matmul;
+  TF_CHECK_OK(GetNodeAttr(matmul->def(), "T", &T_matmul));
+
+  DataType T_s, T_d;
+  TF_CHECK_OK(GetNodeAttr(cast->def(), "SrcT", &T_s));
+  TF_CHECK_OK(GetNodeAttr(cast->def(), "DstT", &T_d));
+
+  // Don't try to Fusion if datatype is not DT_FLOAT or DT_BFLOAT16
+  if (T_matmul != T_s || !((T_s == DT_FLOAT && T_d == DT_BFLOAT16) || 
+      (T_s == DT_BFLOAT16 && T_d == DT_FLOAT)) || 
+      matmul->assigned_device_name() != cast->assigned_device_name() ||
+      matmul->def().device() != cast->def().device()) {
+        return Status(error::Code::INVALID_ARGUMENT,
+              "Don't try to Fusion if datatype is not DT_FLOAT or DT_BFLOAT16");
+  }
+
+  const int cast_num = cast->num_inputs();
+  gtl::InlinedVector<Node*, 4> cast_control_edges;
+  gtl::InlinedVector<std::pair<Node*, int>, 4> cast_in(cast_num);
+  FillInputs(cast, &cast_control_edges, &cast_in);
+
+  const int matmul_num = matmul->num_inputs();
+  gtl::InlinedVector<Node*, 4> matmul_control_edges;
+  gtl::InlinedVector<std::pair<Node*, int>, 4> matmul_in(matmul_num);
+  FillInputs(matmul, &matmul_control_edges, &matmul_in);
+
+  // We need to ensure that Matmul only feeds to Cast (some other operator is
+  // not expecting output of Matmul). If this is not the case, then we cannot
+  // merge Matmul with Cast.
+  const int kFirstOutputSlot = 0;
+  for (const Edge* e : matmul->out_edges()) {
+    if (e->src_output() == kFirstOutputSlot && e->dst() != cast) {
+      return Status(error::Code::INVALID_ARGUMENT,
+                    "Matmul does not feed to Cast, or "
+                    "it feeds Cast but has multiple outputs. "
+                    "Will skip node merge optimization");
+    }
+  }
+
+  CHECK_EQ(cast->out_edges().size(), 1);
+
+  // We will use the node name of MatMul as the name of new node
+  // Build new node. We use same name as original node, but change the op
+  // name.
+  NodeBuilder nb(matmul->name(),
+                 mkl_op_registry::GetMklAutoCastOpName(csinfo_.matmul));
+
+  nb.Input(matmul_in[0].first, matmul_in[0].second);  // In1 of MatMul
+  nb.Input(matmul_in[1].first, matmul_in[1].second);  // In2 of MatMul
+
+  // Copy attributes from MatMul to MatMulCast.
+  CopyAttrsMatMulCast(const_cast<const Node*>(matmul), &nb);
+
+  // Copy the device assigned to old node to new node.
+  nb.Device(cast->def().device());
+
+  // Create node.
+  Node* new_node;
+  nb.Attr("_kernel", mkl_op_registry::kMklNameChangeOpLabel);
+  TF_CHECK_OK(nb.Finalize(&**g, &new_node));
+
+  // In the following code of this function, an unsorted set is used to make
+  // sure no duplicated edges be added into the new node. Therefore, we can
+  // pass allow_duplicates = true in AddControlEdge call to skip the O(#edges)
+  // check in the routine.
+
+  // Incoming data edges from 'matmul' node and 'cast' node to new 'new_node'
+  // node are already copied in BuildNode. We handle control edges now.
+  std::unordered_set<Node*> unique_node;
+  for (const Edge* e : matmul->in_edges()) {
+    if (e->IsControlEdge()) {
+      auto result = unique_node.insert(e->src());
+      if (result.second) {
+        (*g)->AddControlEdge(e->src(), new_node, true);
+      }
+    }
+  }
+  unique_node.clear();
+
+  for (const Edge* e_in : cast->in_edges()) {
+    if (e_in->IsControlEdge()) {
+      auto result = unique_node.insert(e_in->src());
+      if (result.second) {
+        for (const Edge* e_out : cast->out_edges()) {
+          (*g)->AddControlEdge(e_in->src(), e_out->dst(), true);
+        }
+      }
+    }
+  }
+  unique_node.clear();
+
+  // Incoming edges are fixed, we will fix the outgoing edges now.
+  // First, we will fix outgoing control edges from 'matmul' node.
+  for (const Edge* e : matmul->out_edges()) {
+    if (e->IsControlEdge()) {
+      auto result = unique_node.insert(e->dst());
+      if (result.second) {
+        (*g)->AddControlEdge(new_node, e->dst(), true);
+      }
+    }
+  }
+  unique_node.clear();
+
+  // Second, we will fix outgoing control and data edges from 'cast' node.
+  for (const Edge* e : cast->out_edges()) {
+    if (e->IsControlEdge()) {
+      auto result = unique_node.insert(e->dst());
+      if (result.second) {
+        (*g)->AddControlEdge(new_node, e->dst(), true);
+      }
+    } else {
+      // Cast has only 1 output (at slot 0) and merged node also has only 1
+      // output (at slot 0).
+      auto new_edge = (*g)->AddEdge(new_node, 0,
+                                    e->dst(), e->dst_input());
+      DCHECK(new_edge);
+    }
+  }
+
+  // Copy device assigned to old node to new node.
+  // It's ok to use matmul or cast as we have enforced a check that
+  // both have same device assigned.
+  new_node->set_assigned_device_name(matmul->assigned_device_name());
+
+  VLOG(1) << "MklLayoutRewritePass: Merged old node:" << matmul->DebugString()
+          << ", and node: " << cast->DebugString()
+          << ", into node:" << new_node->DebugString();
+
+  (*g)->RemoveNode(cast);
+  (*g)->RemoveNode(matmul);
   return Status::OK();
 }
 
@@ -3591,6 +3791,13 @@ Status MklLayoutRewritePass::MergeNode(std::unique_ptr<Graph>* g, Node* m,
       ((n->type_string() == csinfo_.bias_add_grad &&
         m->type_string() == csinfo_.conv2d_grad_filter))) {
     return this->MergeConv2DBackpropFilterWithBiasAddGrad(g, m, n);
+  }
+
+  if (((m->type_string() == csinfo_.matmul &&
+        n->type_string() == csinfo_.cast)) ||
+      ((n->type_string() == csinfo_.matmul &&
+        m->type_string() == csinfo_.cast))) {
+    return this->MergeMatmulWithCast(g, m, n);
   }
 
   return Status(error::Code::UNIMPLEMENTED,
@@ -4110,10 +4317,30 @@ bool MklLayoutRewritePass::FixMklMetaDataEdges(std::unique_ptr<Graph>* g,
 ///////////////////////////////////////////////////////////////////////////////
 //              Run function for the pass
 ///////////////////////////////////////////////////////////////////////////////
+static void DumpGraphTxt(string status, const Graph* g) {
+  string enable_cast_fusion;
+  ReadStringFromEnvVar(
+      "TF_LAYOUT_PASS_GRAPH_CAST_FUSION", "", &enable_cast_fusion);
+  if (enable_cast_fusion.empty()) return;
+
+  size_t timestamp = Env::Default()->NowMicros() / 1000;
+  string fname = 
+    io::JoinPath(enable_cast_fusion,
+      strings::StrCat(timestamp, "_", status, ".pb"));
+  
+  GraphDef graphDef;
+  g->ToGraphDef(&graphDef);
+  std::fstream f;
+  f.open(fname.c_str(), std::fstream::out | std::fstream::binary);
+  f << graphDef.SerializeAsString();
+  f.close();
+}
+
 bool MklLayoutRewritePass::RunPass(std::unique_ptr<Graph>* g) {
   bool result = false;
   CHECK_NOTNULL(g);
 
+  DumpGraphTxt("before_running_MklLayoutRewritePass", &**g);
   DumpGraph("Before running MklLayoutRewritePass", &**g);
 
   std::vector<Node*> order;
@@ -4141,8 +4368,8 @@ bool MklLayoutRewritePass::RunPass(std::unique_ptr<Graph>* g) {
       }
     }
   }
-
   DumpGraph("After running MklLayoutRewritePass(NodeMerge)", &**g);
+  DumpGraphTxt("After_running_MklLayoutRewritePass_NodeMerge", &**g);
 
   order.clear();
   GetReversePostOrder(**g, &order);  // This will give us topological sort.
@@ -4165,6 +4392,7 @@ bool MklLayoutRewritePass::RunPass(std::unique_ptr<Graph>* g) {
     }
   }
   DumpGraph("After running MklLayoutRewritePass(NodeFusion)", &**g);
+  DumpGraphTxt("After_running_MklLayoutRewritePass_NodeFusion", &**g);
 
   order.clear();
   GetReversePostOrder(**g, &order);  // This will give us topological sort.
@@ -4191,8 +4419,8 @@ bool MklLayoutRewritePass::RunPass(std::unique_ptr<Graph>* g) {
       }
     }
   }
-
   DumpGraph("After running MklLayoutRewritePass(NodeMerge+Rewrite)", &**g);
+  DumpGraphTxt("After_running_MklLayoutRewritePass_NodeMerge_Rewrite", &**g);
 
   order.clear();
   GetReversePostOrder(**g, &order);  // This will give us topological sort.
@@ -4212,6 +4440,7 @@ bool MklLayoutRewritePass::RunPass(std::unique_ptr<Graph>* g) {
   }
   DumpGraph("After running MklLayoutRewritePass(NodeMerge+Rewrite+Fixup)",
             &**g);
+  DumpGraphTxt("After_running_MklLayoutRewritePass_NodeMerge_Rewrite_Fixup", &**g);
 
   return result;
 }

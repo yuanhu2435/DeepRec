@@ -30,12 +30,6 @@ limitations under the License.
 
 #include "tensorflow/core/framework/fake_input.h"
 
-#define printTensor(T, d) \
-    std::cout<< (T).tensor<float, (d)>() << std::endl
-
-#define printTensorUInt8(T, d) \
-    std::cout<< (T).tensor<uint8, (d)>() << std::endl
-
 namespace tensorflow {
 
 //----------------------------------------------------------------------------//
@@ -49,6 +43,10 @@ static const TensorShape dummy_shape({8});
 
 using GraphRunner =
     std::function<void(const Tensor& input_data, const Tensor& filter_data, Tensor* out, bool transpose_a, bool transpose_b)>;
+
+const auto printTensor = [](const string info, const Tensor& input){
+  std::cout << info << " \n  " << input.DebugString() << std::endl << std::endl;
+  };
 
 template <typename T>
 class CommonTestUtilities : public OpsTestBase {
@@ -115,6 +113,37 @@ class CommonTestUtilities : public OpsTestBase {
     test::ExpectClose(output, mkl_output, 1e-5);
   }
 
+  // Compare two methods of bf16 datatype implement.
+  static void CheckMKLBf16Accuracy(int m, int k, int n,
+                                     const GraphRunner& run_default,
+                                     const GraphRunner& run_default_cast,
+                                     const GraphRunner& run_mkl_fused_cast,
+                                     bool transpose_a, bool transpose_b) { 
+    DataType dtype = DataTypeToEnum<T>::v();
+
+    Tensor input(dtype, transpose_a ? TensorShape({k, m}) : TensorShape({m, k}));
+    input.flat<T>() = input.flat<T>().template setRandom<random_gen_>();
+
+    Tensor weight(dtype, transpose_b ? TensorShape({n, k}) : TensorShape({k, n}));
+    weight.flat<T>() = weight.flat<T>().template setRandom<random_gen_>();
+
+    Tensor output;
+    Tensor default_cast_output;
+    Tensor mkl_cast_fused_output;
+
+    run_default(input, weight, &output, transpose_a, transpose_b);
+    run_default_cast(input, weight, &default_cast_output, transpose_a, transpose_b);
+    run_mkl_fused_cast(input, weight, &mkl_cast_fused_output, transpose_a, transpose_b);
+
+    ASSERT_EQ(output.dtype(), default_cast_output.dtype());
+    ASSERT_EQ(output.dtype(), mkl_cast_fused_output.dtype());
+    ASSERT_EQ(output.shape(), default_cast_output.shape());
+    ASSERT_EQ(output.shape(), mkl_cast_fused_output.shape());
+
+    test::ExpectClose(output, default_cast_output, 1e-1);
+    test::ExpectClose(output, mkl_cast_fused_output, 1e-1);
+  }
+
  private:
   using random_gen_ = Eigen::internal::NormalRandomGenerator<T>;
 };
@@ -138,6 +167,26 @@ class MklMatMulOpTest : public OpsTestBase {
     TF_EXPECT_OK(InitOp()); //initial
     AddInputFromArray<T>(input.shape(), input.flat<T>()); // A input 
     AddInputFromArray<T>(weight.shape(), weight.flat<T>());
+    TF_EXPECT_OK(RunOpKernel()); //Run the node computation
+    *output = *GetOutput(0); //Get output
+  }
+
+  void RunMklMatMulOpCast(const Tensor& input, const Tensor& weight,
+                           Tensor* output, bool transpose_a, bool transpose_b) {
+    DataType dtype = DataTypeToEnum<bfloat16>::v();
+
+    TF_EXPECT_OK(
+        NodeDefBuilder("mkl_matmul_op", "_MklMatMulCast") //build node
+            .Input(FakeInput(dtype))
+            .Input(FakeInput(dtype))
+            .Attr("transpose_a", transpose_a)
+            .Attr("transpose_b", transpose_b)
+            .Attr("_kernel", "MklNameChangeOp")
+            .Finalize(node_def()));
+    TF_EXPECT_OK(InitOp());
+    AddInputFromArray<bfloat16>(input.shape(), input.flat<bfloat16>()); 
+    AddInputFromArray<bfloat16>(weight.shape(), weight.flat<bfloat16>());
+
     TF_EXPECT_OK(RunOpKernel()); //Run the node computation
     *output = *GetOutput(0); //Get output
   }
@@ -167,6 +216,81 @@ class MklMatMulOpTest : public OpsTestBase {
 
     CommonTestUtilities<T>::VerifyMKLMatrixClose(m, k, n,
                                                  run_default, run_mkl,
+                                                 transpose_a, transpose_b);
+  }
+
+  void VerifyMKLMatMulCast(int m, int k, int n, bool transpose_a, bool transpose_b){
+
+    const GraphRunner run_default =
+        [this](const Tensor& input, const Tensor& weight,
+              Tensor* output, bool transpose_a, bool transpose_b) {
+          std::cout << "--- run_default ---" << std::endl;
+
+          // std::cout << "Tensor *input: " << std::endl;
+          // printTensor("input:", input);
+
+          // std::cout << "Tensor *weight: " << std::endl;
+          // printTensor("weight:", weight);
+
+          auto root = tensorflow::Scope::NewRootScope();
+          auto input_op =
+              ops::Const(root.WithOpName("input"), Input::Initializer(input));
+          Output next_op = ops::MatMul(root.WithOpName("matmul"), input_op,
+                                       ops::Const(root.WithOpName("weight"),
+                                       Input::Initializer(weight)),
+                                       ops::MatMul::TransposeA(transpose_a).TransposeB(transpose_b)
+                                       );
+          string last_op = "matmul";
+          CommonTestUtilities<T>::RunAndFetch(root, last_op, output);
+          printTensor("Output:", *output);
+        };
+
+    const GraphRunner run_default_add_cast =
+        [this](const Tensor& input, const Tensor& weight,
+                Tensor* output, bool transpose_a, bool transpose_b) {
+          std::cout << "--- enter run_default_add_cast ---" << std::endl;
+
+          auto root = tensorflow::Scope::NewRootScope();
+          auto input_op =
+              ops::Const(root.WithOpName("input"), Input::Initializer(input));
+          auto weight_op = 
+              ops::Const(root.WithOpName("weight"), Input::Initializer(weight));
+
+          Output out_input = ops::Cast(root.WithOpName("cast_input"), input_op, DT_BFLOAT16, ops::Cast::Truncate(true));
+          Output out_weight = ops::Cast(root.WithOpName("cast_weight"), weight_op, DT_BFLOAT16, ops::Cast::Truncate(true));
+
+          Output out_matmul = ops::MatMul(root.WithOpName("matmul"), out_input, out_weight,
+                                       ops::MatMul::TransposeA(transpose_a).TransposeB(transpose_b)
+                                       );
+          Output out_cast = ops::Cast(root.WithOpName("cast"), out_matmul, DT_FLOAT, ops::Cast::Truncate(true));
+          string last_op = "cast";
+
+          CommonTestUtilities<T>::RunAndFetch(root, last_op, output);
+          printTensor("Output:", *output);
+        };
+
+    const GraphRunner run_mkl_fused_cast =
+        [this](const Tensor& input, const Tensor& weight,
+                Tensor* output, bool transpose_a, bool transpose_b) {
+          std::cout << "--- enter run_mkl_fused_cast ---" << std::endl;
+
+          DataType dtype = DataTypeToEnum<bfloat16>::v();
+
+          Tensor input_2(dtype, input.shape());
+          auto input_ptr = (input.template flat<T>().data());
+          auto input_2_ptr = reinterpret_cast<dnnl_bfloat16_t *>(input_2.template flat<bfloat16>().data());
+          dnnl::cvt_float_to_bfloat16(input_2_ptr, input_ptr, input.shape().num_elements());
+
+          Tensor weight_2(dtype, weight.shape());
+          auto weight_ptr = (weight.template flat<T>().data());
+          auto weight_2_ptr = reinterpret_cast<dnnl_bfloat16_t *>(weight_2.template flat<bfloat16>().data());
+          dnnl::cvt_float_to_bfloat16(weight_2_ptr, weight_ptr, weight.shape().num_elements());
+
+          RunMklMatMulOpCast(input_2, weight_2, output, transpose_a, transpose_b);
+          printTensor("Output:", *output);
+        };
+
+    CommonTestUtilities<T>::CheckMKLBf16Accuracy(m, k, n, run_default, run_default_add_cast, run_mkl_fused_cast,
                                                  transpose_a, transpose_b);
   }
 };
@@ -241,6 +365,10 @@ TYPED_TEST_P(MklMatMulOpTest, Matmul_256_1024_256_true_true) {
   this->VerifyMKLMatMul(256, 1024, 256, true, true);
 }
 
+TYPED_TEST_P(MklMatMulOpTest, MatmulCast_2_2_2_false_false) {
+  this->VerifyMKLMatMulCast(2, 2, 2, false, false);
+}
+
 REGISTER_TYPED_TEST_CASE_P(MklMatMulOpTest,
                           Matmul_1_1_1_false_false,
                           Matmul_1_128_128_false_false,
@@ -258,7 +386,8 @@ REGISTER_TYPED_TEST_CASE_P(MklMatMulOpTest,
                           Matmul_128_128_128_true_true,
                           Matmul_32_128_32_true_true,
                           Matmul_256_128_256_true_true,
-                          Matmul_256_1024_256_true_true
+                          Matmul_256_1024_256_true_true,
+                          MatmulCast_2_2_2_false_false
                           );
 
 using MklMatMulDataTypes = ::testing::Types<float>;
@@ -789,34 +918,34 @@ BM_Matmul(2000, 1, 2000, false, true);
 BM_Matmul(2000, 1, 2000, true, true);
 */
 
-// Vector * Vector
-BM_Matmul(1, 50, 1, false, false);
-BM_Matmul(1, 2000, 1, false, false);
+// // Vector * Vector
+// BM_Matmul(1, 50, 1, false, false);
+// BM_Matmul(1, 2000, 1, false, false);
 
-BM_Matmul(50, 1, 50, false, false);
-BM_Matmul(2000, 1, 2000, false, false);
+// BM_Matmul(50, 1, 50, false, false);
+// BM_Matmul(2000, 1, 2000, false, false);
 
-// Vector * Matrix
-BM_Matmul(1, 50, 50, false, false);
-BM_Matmul(1, 2000, 2000, false, false);
+// // Vector * Matrix
+// BM_Matmul(1, 50, 50, false, false);
+// BM_Matmul(1, 2000, 2000, false, false);
 
-BM_Matmul(50, 50, 1, false, false);
-BM_Matmul(2000, 2000, 1, false, false);
+// BM_Matmul(50, 50, 1, false, false);
+// BM_Matmul(2000, 2000, 1, false, false);
 
-// Matrix * Matrix
-BM_Matmul(32, 32, 32, false, false);
-BM_Matmul(51200, 64, 64, false, false);
-BM_Matmul(8, 512, 512, false, false);
-BM_Matmul(128, 512, 512, false, false);
-BM_Matmul(16, 1024, 1024, false, false);
-BM_Matmul(256, 1024, 1024, false, false);
-BM_Matmul(4096, 4096, 4096, false, false);
+// // Matrix * Matrix
+// BM_Matmul(32, 32, 32, false, false);
+// BM_Matmul(51200, 64, 64, false, false);
+// BM_Matmul(8, 512, 512, false, false);
+// BM_Matmul(128, 512, 512, false, false);
+// BM_Matmul(16, 1024, 1024, false, false);
+// BM_Matmul(256, 1024, 1024, false, false);
+// BM_Matmul(4096, 4096, 4096, false, false);
 
-BM_Matmul(2560, 64, 1, false, false);
-BM_Matmul(2560, 448, 1, false, false);
-BM_Matmul(2560, 2304, 64, false, false);
-BM_Matmul(2560, 1040, 1536, false, false);
-BM_Matmul(2560, 14435, 2304, false, false);
+// BM_Matmul(2560, 64, 1, false, false);
+// BM_Matmul(2560, 448, 1, false, false);
+// BM_Matmul(2560, 2304, 64, false, false);
+// BM_Matmul(2560, 1040, 1536, false, false);
+// BM_Matmul(2560, 14435, 2304, false, false);
 
 /*
 BM_Matmul(14435, 2560, 2304, true, false);
@@ -880,10 +1009,7 @@ static Graph* FusedMatMul(const string& kind, int m, int k, int n,
                     .Attr("transpose_a", transpose_a)
                     .Attr("transpose_b", transpose_b);
 
-  isDefault ? nodeBuilder : nodeBuilder.Attr("_kernel", "MklLayoutDependentOp")
-                                       .Input(not_mkl_shape)
-                                       .Input(not_mkl_shape)
-                                       .Input(args_not_mkl);
+  isDefault ? nodeBuilder : nodeBuilder.Attr("_kernel", "MklNameChangeOp");
 
   TF_CHECK_OK(nodeBuilder.Finalize(g, nullptr));
 
@@ -918,34 +1044,131 @@ static Graph* FusedMatMul(const string& kind, int m, int k, int n,
   BM_FusedMatMul_ACT(M, K, N, TA, TB, float, cpu);    \
   BM_FusedMatMul_ACT(M, K, N, TA, TB, bfloat16, cpu); \
 
-// Vector * Vector
-BM_FusedMatMul(1, 50, 1, false, false);
-BM_FusedMatMul(1, 2000, 1, false, false);
+// // Vector * Vector
+// BM_FusedMatMul(1, 50, 1, false, false);
+// BM_FusedMatMul(1, 2000, 1, false, false);
 
-BM_FusedMatMul(50, 1, 50, false, false);
-BM_FusedMatMul(2000, 1, 2000, false, false);
+// BM_FusedMatMul(50, 1, 50, false, false);
+// BM_FusedMatMul(2000, 1, 2000, false, false);
 
-// Vector * Matrix
-BM_FusedMatMul(1, 50, 50, false, false);
-BM_FusedMatMul(1, 2000, 2000, false, false);
+// // Vector * Matrix
+// BM_FusedMatMul(1, 50, 50, false, false);
+// BM_FusedMatMul(1, 2000, 2000, false, false);
 
-BM_FusedMatMul(50, 50, 1, false, false);
-BM_FusedMatMul(2000, 2000, 1, false, false);
+// BM_FusedMatMul(50, 50, 1, false, false);
+// BM_FusedMatMul(2000, 2000, 1, false, false);
 
-// Matrix * Matrix
-BM_FusedMatMul(32, 32, 32, false, false);
-BM_FusedMatMul(51200, 64, 64, false, false);
-BM_FusedMatMul(8, 512, 512, false, false);
-BM_FusedMatMul(128, 512, 512, false, false);
-BM_FusedMatMul(16, 1024, 1024, false, false);
-BM_FusedMatMul(256, 1024, 1024, false, false);
-BM_FusedMatMul(4096, 4096, 4096, false, false);
+// // Matrix * Matrix
+// BM_FusedMatMul(32, 32, 32, false, false);
+// BM_FusedMatMul(51200, 64, 64, false, false);
+// BM_FusedMatMul(8, 512, 512, false, false);
+// BM_FusedMatMul(128, 512, 512, false, false);
+// BM_FusedMatMul(16, 1024, 1024, false, false);
+// BM_FusedMatMul(256, 1024, 1024, false, false);
+// BM_FusedMatMul(4096, 4096, 4096, false, false);
 
-BM_FusedMatMul(2560, 64, 1, false, false);
-BM_FusedMatMul(2560, 448, 1, false, false);
-BM_FusedMatMul(2560, 2304, 64, false, false);
-BM_FusedMatMul(2560, 1040, 1536, false, false);
-BM_FusedMatMul(2560, 14435, 2304, false, false);
+// BM_FusedMatMul(2560, 64, 1, false, false);
+// BM_FusedMatMul(2560, 448, 1, false, false);
+// BM_FusedMatMul(2560, 2304, 64, false, false);
+// BM_FusedMatMul(2560, 1040, 1536, false, false);
+// BM_FusedMatMul(2560, 14435, 2304, false, false);
+
+BM_FusedMatMul(1, 128, 96, false, false);
+BM_FusedMatMul(1, 96, 64, false, false);
+BM_FusedMatMul(1, 64, 32, false, false);
+
+BM_FusedMatMul(512, 13, 512, false, false);
+BM_FusedMatMul(512, 512, 256, false, false);
+BM_FusedMatMul(512, 256, 64, false, false);
+BM_FusedMatMul(512, 64, 16, false, false);
+
+BM_FusedMatMul(512, 367, 512, false, false);
+// BM_FusedMatMul(512, 512, 256, false, false);
+BM_FusedMatMul(512, 256, 1, false, false);
+
+template <typename T>
+static Graph* MatmulCast(const string& kind, int m, int k, int n, bool transpose_a, bool transpose_b) {
+  Graph* g = new Graph(OpRegistry::Global());
+  DataType type = DataTypeToEnum<T>::v();
+
+  const bool isDefault = (kind == "Default");
+  const bool isMKL = (kind == "Mkl");
+  const bool isMKLCast = (kind == "MklCast");
+  string op_name = "";
+
+  if (isDefault) {
+    op_name = "MatMul";
+  } else if (isMKL) {
+    op_name = "_MklMatMul";
+  } else if (isMKLCast) {
+    op_name = "_MklMatMulCast";
+  }
+
+  Tensor in0(type, transpose_a ? TensorShape({k, m}) : TensorShape({m, k}));
+  in0.flat<T>().setRandom();
+  Tensor in1(type, transpose_b ? TensorShape({n, k}) : TensorShape({k, n}));
+  in1.flat<T>().setRandom();
+
+  Node* input_in0 = test::graph::Constant(g, in0);
+  Node* input_in1 = test::graph::Constant(g, in1);
+  Node* n_matmul;
+
+  auto nodeBuilder = NodeBuilder(g->NewName("n"), op_name)
+                    .Input(input_in0)
+                    .Input(input_in1)
+                    .Attr("transpose_a", transpose_a)
+                    .Attr("transpose_b", transpose_b);
+  
+  if (isMKLCast) {
+    nodeBuilder.Attr("_kernel", "MklNameChangeOp");
+    TF_CHECK_OK(nodeBuilder.Finalize(g, nullptr));
+    return g;
+  }
+
+  isMKL ? nodeBuilder.Attr("_kernel", "MklNameChangeOp") : nodeBuilder;
+
+  TF_CHECK_OK(nodeBuilder.Finalize(g, &n_matmul));
+
+  Node* output_cast = test::graph::Cast(g, n_matmul, DT_FLOAT);
+
+  return g;
+}
+
+#define BM_MatMulCast_Base(kind, M, K, N, TA, TB, T, DEVICE, NTH)                              \
+  static void BM_MatMulCast##_##kind##_##M##_##K##_##N##_##TA##_##TB##_##T##_##DEVICE##_##NTH( \
+      int iters) {                                                                         \
+    testing::UseRealTime();                                                                \
+    testing::ItemsProcessed(static_cast<int64>(iters) * M * K * N * 2);                    \
+    SessionOptions opts;                                                                   \
+    opts.config.set_intra_op_parallelism_threads(NTH);                                     \
+    test::Benchmark(#DEVICE, MatmulCast<T>(#kind, M, K, N, TA, TB), &opts).Run(iters);         \
+  }                                                                                        \
+  BENCHMARK(BM_MatMulCast##_##kind##_##M##_##K##_##N##_##TA##_##TB##_##T##_##DEVICE##_##NTH);  \
+
+#define BM_MatMulCast_kind(M, K, N, TA, TB, T, DEVICE, NTH)     \
+  BM_MatMulCast_Base(Default, M, K, N, TA, TB, T, DEVICE, NTH); \
+  BM_MatMulCast_Base(Mkl, M, K, N, TA, TB, T, DEVICE, NTH); \
+  BM_MatMulCast_Base(MklCast, M, K, N, TA, TB, T, DEVICE, NTH); \
+
+#define BM_MatMulCast_NTH(M, K, N, TA, TB, T, DEVICE) \
+  BM_MatMulCast_kind(M, K, N, TA, TB, T, DEVICE, 1);  \
+  BM_MatMulCast_kind(M, K, N, TA, TB, T, DEVICE, 4);  \
+  BM_MatMulCast_kind(M, K, N, TA, TB, T, DEVICE, 8);  \
+
+#define BM_MatMulCast(M, K, N, TA, TB)               \
+  BM_MatMulCast_NTH(M, K, N, TA, TB, bfloat16, cpu); \
+
+// BM_MatMulCast(1, 50, 1, false, false);
+// BM_MatMulCast(1, 50, 50, false, false);
+
+// BM_MatMulCast(16, 16, 16, false, false);
+// BM_MatMulCast(32, 32, 32, false, false);
+// BM_MatMulCast(64, 64, 64, false, false);
+// BM_MatMulCast(128, 128, 128, false, false);
+// BM_MatMulCast(256, 256, 256, false, false);
+// BM_MatMulCast(512, 512, 512, false, false);
+// BM_MatMulCast(1024, 1024, 1024, false, false);
+// BM_MatMulCast(2048, 2048, 2048, false, false);
 
 }  // end namespace tensorflow
 

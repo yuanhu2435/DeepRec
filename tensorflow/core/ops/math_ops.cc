@@ -1038,6 +1038,17 @@ REGISTER_OP("_MklMatMul")
     .Attr("transpose_b: bool = false")
     .Attr("T: {bfloat16, float, double, complex64, complex128}")
     .SetShapeFn(shape_inference::MatMulShape);
+
+REGISTER_OP("_MklMatMulCast")
+    .Input("a: TA")
+    .Input("b: TB")
+    .Output("product: TO")
+    .Attr("transpose_a: bool = false")
+    .Attr("transpose_b: bool = false")
+    .Attr("TA: {bfloat16, float, double, complex64, complex128} = DT_BFLOAT16")
+    .Attr("TB: {bfloat16, float, double, complex64, complex128} = DT_BFLOAT16")
+    .Attr("TO: {bfloat16, float, double, complex64, complex128} = DT_FLOAT")
+    .SetShapeFn(shape_inference::MatMulShape);
 #endif  // INTEL_MKL
 
 REGISTER_OP("SparseMatMul")

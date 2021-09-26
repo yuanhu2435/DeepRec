@@ -223,6 +223,30 @@ TEST_F(MklLayoutPassTest, Basic) {
             "A->C;A->D;B->C:1;B->D:1");
 }
 
+TEST_F(MklLayoutPassTest, MatMul_BP_CAST_bf16_2_fp32) {
+   InitGraph(
+       "node { name: 'A' op: 'BFloat16Input'}"
+       "node { name: 'B' op: 'BFloat16Input'}"
+       "node { name: 'C' op: 'BFloat16Input'}"
+       "node { name: 'D' op: 'MatMul'"
+       " attr { key: 'T'      value { type: DT_BFLOAT16 } }"
+       " input: 'A'"
+       " input: 'B'"
+       " input: '^C'}"
+       "node { name: 'E' op: 'Cast'"
+       " attr { key: 'SrcT'      value { type: DT_BFLOAT16 } }"
+       " attr { key: 'DstT'      value { type: DT_FLOAT } }"
+       " input: ['D']}"
+       "node { name: 'F' op: 'Identity'"
+       " attr { key: 'T'      value { type: DT_FLOAT } }"
+       " input: ['E']}"
+       );
+   EXPECT_EQ(DoMklLayoutOptimizationPass(),
+             "A(BFloat16Input);B(BFloat16Input);"
+             "C(BFloat16Input);D(_MklMatMulCast);F(Identity)"
+             "|A->D;B->D:1;C:control->D:control;D->F");
+}
+
 // Test set 1: Conv2D + AddBias
 
 // C=Conv2D(A,B); E=BiasAdd(C,D); Z=Zeta(E,Y)

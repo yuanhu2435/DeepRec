@@ -117,6 +117,10 @@ static const char* kMklQuantizedOpLabelPattern = "label='QuantizedMklOp'";
 
 // Prefix that we add to Tensorflow op name to construct Mkl op name.
 static const char* const kMklOpPrefix = "_Mkl";
+
+// Suffix that we add to Tensorflow op name to construct Mkl op name.
+static const char* const kMklOpCastSuffix = "Cast";
+
 // TODO(intel-tf): PR review feedback (penpornk)
 // Can we add eager_mode (or is_eager) as an op attribute instead?
 // This way we don't need to rename the op just to pass eager_mode
@@ -127,6 +131,12 @@ static const char* const kMklEagerOpPrefix = "_MklEager";
 // We prefix 'Mkl' to the original op to get Mkl op.
 inline string GetMklOpName(const string& name) {
   return string(kMklOpPrefix) + name;
+}
+
+// Get the name of Mkl op from original TensorFlow op
+// We prefix 'Mkl' to the original op to get Mkl op.
+inline string GetMklAutoCastOpName(const string& name) {
+  return string(kMklOpPrefix) + name + string(kMklOpCastSuffix);
 }
 
 // Get the name of Mkl Eager op from original TensorFlow op

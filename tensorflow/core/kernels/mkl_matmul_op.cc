@@ -41,7 +41,8 @@ namespace tensorflow {
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
 
-template <typename Device, typename T, bool USE_CUBLAS>
+template <typename Device, typename TA, typename TB,
+          typename TO, bool USE_CUBLAS>
 class MklMatMulOp : public OpKernel {
  public:
   explicit MklMatMulOp(OpKernelConstruction* ctx) : OpKernel(ctx) {
@@ -84,8 +85,8 @@ class MklMatMulOp : public OpKernel {
       // If a has shape [x, 0] and b has shape [0, y], the
       // output shape is [x, y] where x and y are non-zero, so we fill
       // the output with zeros.
-      functor::SetZeroFunctor<Device, T> f;
-      f(ctx->eigen_device<Device>(), out->flat<T>());
+      functor::SetZeroFunctor<Device, TO> f;
+      f(ctx->eigen_device<Device>(), out->flat<TO>());
       return;
     }
 
@@ -95,9 +96,9 @@ class MklMatMulOp : public OpKernel {
     bool transpose_a = dim_pair[0].first == 0;
     bool transpose_b = dim_pair[0].second == 1;
 
-    auto a_ptr = (a.template flat<T>().data());
-    auto b_ptr = (b.template flat<T>().data());
-    auto c_ptr = (out->template flat<T>().data());
+    auto a_ptr = (a.template flat<TA>().data());
+    auto b_ptr = (b.template flat<TB>().data());
+    auto c_ptr = (out->template flat<TO>().data());
 
     MklBlasGemm(ctx, transpose_a, transpose_b, m, n, k, a_ptr,
                 transpose_a ? m : k, b_ptr, transpose_b ? k : n, c_ptr, n);
@@ -204,6 +205,34 @@ class MklMatMulOp : public OpKernel {
     FloatToBFloat16(c_float.flat<float>().data(), c, c_float.NumElements());
 #endif  // ENABLE_MKLDNN_V1
   }
+
+  void MklBlasGemm(OpKernelContext* ctx, bool transa, bool transb, const int m,
+                   const int n, const int k, const bfloat16* a, const int lda,
+                   const bfloat16* b, const int ldb, float* c,
+                   const int ldc) {
+    const float alpha = 1.0f;
+    const float beta = 0.0f;
+    const int index_transa = transa ? 1 : 0;
+    const int index_transb = transb ? 1 : 0;
+
+#ifdef ENABLE_MKLDNN_V1
+    const char ftrans[] = {'N', 'T', 'C'};
+
+#ifdef ENABLE_MKLDNN_THREADPOOL
+    MklDnnThreadPool eigen_tp(ctx);
+    gemm_bf16bf16f32(ftrans[index_transa], ftrans[index_transb], m, n, k, alpha,
+                     reinterpret_cast<const dnnl_bfloat16_t*>(a), lda,
+                     reinterpret_cast<const dnnl_bfloat16_t*>(b), ldb,
+                     beta, c, ldc, &eigen_tp);
+#else
+    OP_REQUIRES(ctx, false, 
+                errors::InvalidArgument(
+                        "Only support `--config=mkl_threadpool` compile option."));
+
+#endif  // ENABLE_MKLDNN_THREADPOOL
+#endif  // ENABLE_MKLDNN_V1
+  }
+
 #endif  // ENABLE_INTEL_MKL_BFLOAT16
 };
 
@@ -213,7 +242,7 @@ class MklMatMulOp : public OpKernel {
           .Device(DEVICE_CPU)                             \
           .TypeConstraint<T>("T")                         \
           .Label(mkl_op_registry::kMklNameChangeOpLabel), \
-      MklMatMulOp<CPUDevice, T, false /* cublas, ignored for CPU */>);
+      MklMatMulOp<CPUDevice, T, T, T, false /* cublas, ignored for CPU */>);
 
 #ifdef ENABLE_MKL
 // TODO(inteltf) Consider template specialization when adding/removing
@@ -221,6 +250,18 @@ class MklMatMulOp : public OpKernel {
 TF_CALL_float(REGISTER_CPU);
 #ifdef ENABLE_INTEL_MKL_BFLOAT16
 TF_CALL_bfloat16(REGISTER_CPU);
+
+#define REGISTER_CAST_CPU(TA, TB, TO)                     \
+  REGISTER_KERNEL_BUILDER(                                \
+      Name("_MklMatMulCast")                              \
+          .Device(DEVICE_CPU)                             \
+          .TypeConstraint<TA>("TA")                       \
+          .TypeConstraint<TB>("TB")                       \
+          .TypeConstraint<TO>("TO")                       \
+          .Label(mkl_op_registry::kMklNameChangeOpLabel), \
+      MklMatMulOp<CPUDevice, TA, TB, TO, false /* cublas, ignored for CPU */>);
+REGISTER_CAST_CPU(bfloat16, bfloat16, float);
+
 #endif  // ENABLE_INTEL_MKL_BFLOAT16
 #endif  // ENABLE_MKL
 }  // namespace tensorflow
