@@ -502,7 +502,8 @@ class MklLayoutRewritePass : public GraphOptimizationPass {
                       FusedDepthwiseConv2DRewrite,
                       kRewriteForLayoutPropagation});
     rinfo_.push_back({csinfo_.fused_matmul, csinfo_.mkl_fused_matmul,
-                      CopyAttrsAllCheckConstFilter, FusedMatMulRewrite});
+                      CopyAttrsAllCheckConstFilter, FusedMatMulRewrite,
+                      kRewriteForOpNameChange});
     rinfo_.push_back({csinfo_.fused_batch_matmul,
                       csinfo_.mkl_fused_batch_matmul, CopyAttrsAll,
                       AlwaysRewrite, kRewriteForOpNameChange});
@@ -4321,7 +4322,7 @@ static void DumpGraphTxt(string status, const Graph* g) {
   string enable_cast_fusion;
   ReadStringFromEnvVar(
       "TF_LAYOUT_PASS_GRAPH_CAST_FUSION", "", &enable_cast_fusion);
-  if (enable_cast_fusion.empty()) return;
+  if (enable_cast_fusion.empty() || enable_cast_fusion == "1") return;
 
   size_t timestamp = Env::Default()->NowMicros() / 1000;
   string fname = 
