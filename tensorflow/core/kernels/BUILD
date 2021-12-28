@@ -5300,6 +5300,41 @@ tf_kernel_library(
            if_cuda(["@cub_archive//:cub", ":fused_embedding_common_cuh"]),
 )
 
+tf_cc_test(
+    name = "embedding_lookup_sparse_op_test",
+    size = "small",
+    srcs = ["fused_embedding/embedding_lookup_sparse_op_test.cc"],
+    deps = [
+        ":fused_embedding_ops_cpu",
+        ":ops_testutil",
+        ":ops_util",
+        "//tensorflow/cc:cc_ops",
+        "//tensorflow/core:core_cpu",
+        "//tensorflow/core:framework",
+        "//tensorflow/core:framework_internal",
+        "//tensorflow/core:lib",
+        "//tensorflow/core:protos_all_cc",
+        "//tensorflow/core:tensorflow",
+        "//tensorflow/core:test",
+        "//tensorflow/core:test_main",
+        "//tensorflow/core:testlib",
+    ],
+)
+
+tf_kernel_library(
+    name = "fused_embedding_ops_cpu",
+    srcs = [
+        "fused_embedding/embedding_lookup_sparse_op.cc",
+    ],
+    hdrs = ["fused_embedding/embedding_lookup_sparse_op.h"],
+    deps = MATH_DEPS + [
+        ":eigen_contraction_kernel",
+        ":fused_eigen_output_kernels",
+        ":ops_util",
+        ":gpu_utils",
+    ] + mkl_deps(),
+)
+
 tf_kernel_library(
     name = "run_graph_op",
     prefix = "run_graph_op",

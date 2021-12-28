@@ -1,78 +1,5 @@
 ﻿import tensorflow as tf
 from tensorflow.contrib import layers
-import numpy as np
-import sys
-
-tf.set_random_seed(2021)
-
-# colors = {'colors': ['green','red','blue','yellow','pink','blue','red','indigo']}
-# colors = {'colors': [['green','red','blue','yellow','pink','blue','red','indigo'], ['','','','yellow','pink','blue','red','indigo'], ['green','','','','','','','']]}
-colors = {'colors': [['green','red','blue','yellow','pink','blue','red','indigo'], ['','','','','','','',''], ['','','','yellow','pink','blue','red','indigo'], ['','','','','','','',''], ['green','','','','','','','']]}
-
-# colors = {'colors': [[['green','red','blue','yellow','pink','blue','red','indigo'], ['','','','','','','',''], ['','','','yellow','pink','blue','red','indigo'], ['','','','','','','',''], ['green','','','','','','','']],
-#                      [['','','','','','','',''], ['','','','','','','',''], ['','','','','','','',''], ['','','','','','','',''], ['','','','','','','','']],
-#                      [['','red','','yellow','','blue','','indigo'], ['','','','','','','',''], ['','','','yellow','pink','blue','red','indigo'], ['','','','','','','',''], ['green','','','','','','','']]]}
-
-# data = tf.placeholder(tf.string, shape=(5, 8))
-
-with tf.name_scope("embedding"):
-  hash_bucket = tf.feature_column.categorical_column_with_hash_bucket(key='colors', hash_bucket_size=5)
-  column = tf.feature_column.embedding_column(hash_bucket, 3)
-  tensor = tf.feature_column.input_layer(colors, [column])
-
-with tf.name_scope("mlp"):
-  layer = layers.fully_connected(tensor, 6, activation_fn=tf.nn.leaky_relu)
-
-labels = tf.constant(1.0, shape=[5, 6], dtype=float)
-
-with tf.name_scope("logits"):
-  loss_op = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=layer, labels=labels))
-
-with tf.name_scope("optimizer"):
-  train_op = tf.train.AdagradOptimizer(learning_rate=0.01, initial_accumulator_value=0.1).minimize(loss_op)
-
-init_global = tf.global_variables_initializer()
-init_local = tf.local_variables_initializer()
-
-def print_tensor(tensor_name):
-  print(tensor_name)
-  out = sess.graph.get_tensor_by_name(tensor_name)
-  print(out.eval())
-
-with tf.Session() as sess:
-  tf.summary.FileWriter('./graph', sess.graph)
-  sess.run([init_global, init_local])
-  sess.run(tf.tables_initializer())
-  print(sess.run([train_op]))
-
-  input_tensor_name = ["embedding/input_layer/colors_embedding/lookup:0",
-                       "embedding/input_layer/colors_embedding/to_sparse_input/indices:0",
-                       "input_layer/colors_embedding/embedding_weights/read:0"]
-  temp_tensor_name = ["embedding/input_layer/colors_embedding/colors_embedding_weights/Reshape_2:0",
-                      "embedding/input_layer/colors_embedding/colors_embedding_weights/embedding_lookup_sparse/Unique:0",
-                      "embedding/input_layer/colors_embedding/colors_embedding_weights/embedding_lookup_sparse/Unique:1",
-                      "embedding/input_layer/colors_embedding/colors_embedding_weights/embedding_lookup_sparse/Cast:0",
-                      "embedding/input_layer/colors_embedding/colors_embedding_weights/embedding_lookup_sparse/embedding_lookup:0", 
-                      "embedding/input_layer/colors_embedding/colors_embedding_weights/Tile:0",
-                      "embedding/input_layer/colors_embedding/colors_embedding_weights/zeros_like:0",
-                      "embedding/input_layer/concat/concat:0"]
-
-  grad_tensor_name = ["optimizer/gradients/embedding/input_layer/colors_embedding/colors_embedding_weights/embedding_lookup_sparse_grad/SparseSegmentMeanGrad:0"]
-
-  for tensor_name in input_tensor_name:
-    print_tensor(tensor_name)
-
-  for tensor_name in temp_tensor_name:
-    print_tensor(tensor_name)
-
-  for tensor_name in grad_tensor_name:
-    print_tensor(tensor_name)
-
-  saver = tf.train.Saver(max_to_keep=2)
-  saver.save(sess, './ckpt_model/model')
-
-  converted_graph_def = tf.graph_util.convert_variables_to_constants(sess, sess.graph.as_graph_def(), ['mlp/fully_connected/LeakyRelu'])
-  tf.train.write_graph(converted_graph_def, './', "frozen_model.pb", as_text=False)
 
 '''
 [array([[ 0.09472656, -0.45898438,  0.56640625],
@@ -211,3 +138,76 @@ def _embedding_grad(op, grad, _reshape_2_shape_input_tensor,
         _rst = sess.run(values)
     return _rst
 '''
+
+def print_tensor(sess, tensor_name):
+  print("\n### name:", tensor_name)
+  out = sess.graph.get_tensor_by_name(tensor_name)
+  print(out.eval())
+
+
+def print_ops(sess, op_name):
+  print("\n### name:", op_name)
+  out = sess.graph.get_operation_by_name(op_name)
+  print(">" * 64)
+  for _input in out.inputs:
+    print(_input)
+    print(_input.eval())
+  print("-" * 64)
+  for _output in out.outputs:
+    print(_output)
+    print(_output.eval())
+  print("<" * 64, "\n")
+
+
+def get_model(_colors):
+  with tf.name_scope("embedding"):
+    hash_bucket = tf.feature_column.categorical_column_with_hash_bucket(key='colors', hash_bucket_size=10)
+    column = tf.feature_column.embedding_column(hash_bucket, 4)
+    tensor = tf.feature_column.input_layer(_colors, [column])
+
+  with tf.name_scope("mlp"):
+    layer = layers.fully_connected(tensor, 6, activation_fn=tf.nn.leaky_relu)
+
+  labels = tf.constant(1.0, shape=[5, 6], dtype=float)
+
+  with tf.name_scope("logits"):
+    loss_op = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=layer, labels=labels))
+
+  with tf.name_scope("optimizer"):
+    train_op = tf.train.AdagradOptimizer(learning_rate=0.01, initial_accumulator_value=0.1).minimize(loss_op)
+  return train_op
+
+
+def main():
+  tf.set_random_seed(2021)
+  #'green','red','blue','yellow','pink','indigo'
+  colors = {'colors': [['green','red','blue','yellow','pink','blue','red','indigo'], ['','','','','','','',''], ['','','','yellow','pink','blue','red','indigo'], ['','','','','','','',''], ['green','','','','','','','']]}
+
+  train_op = get_model(colors)
+  init_global = tf.global_variables_initializer()
+  init_local = tf.local_variables_initializer()
+
+  with tf.Session() as sess:
+    tf.summary.FileWriter('./graph', sess.graph)
+    sess.run([init_global, init_local])
+    sess.run(tf.tables_initializer())
+    print(sess.run([train_op]))
+
+    input_tensor_name = ["embedding/input_layer/colors_embedding/lookup:0",
+                        "embedding/input_layer/colors_embedding/to_sparse_input/indices:0",
+                        "input_layer/colors_embedding/embedding_weights/read:0"]
+    temp_tensor_name = [""]
+    temp_ops_name = ["optimizer/gradients/embedding/input_layer/colors_embedding/colors_embedding_weights/embedding_lookup_sparse/embedding_lookup_grad/Reshape", "embedding/input_layer/colors_embedding/colors_embedding_weights/embedding_lookup_sparse/embedding_lookup"]
+
+    for _op in temp_ops_name:
+      print_ops(sess, _op)
+
+    # saver = tf.train.Saver(max_to_keep=2)
+    # saver.save(sess, './ckpt_model/model')
+
+    # converted_graph_def = tf.graph_util.convert_variables_to_constants(sess, sess.graph.as_graph_def(), ['mlp/fully_connected/LeakyRelu'])
+    # tf.train.write_graph(converted_graph_def, './', "frozen_model.pb", as_text=False)
+
+
+if __name__ == '__main__':
+    main()

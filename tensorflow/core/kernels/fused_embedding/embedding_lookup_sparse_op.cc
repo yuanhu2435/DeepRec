@@ -233,7 +233,7 @@ public:
     float *weight;
     const Tensor* weight_tensor = &context->input(0);
 
-    //printf("=============== my fused compute...\n");
+    printf("=============== my fused compute...\n");
     // for saved model
     if (weight_tensor->dtype() == DT_RESOURCE) {
       Var* variable;
@@ -276,6 +276,10 @@ public:
     int embedding_size = weight_tensor->dim_size(1);
     bool is_mean = (combiner == 1);
 
+    const Tensor& indice_tensor = context->input(3);
+    Tshape *indice = (Tshape *)indice_tensor.tensor_data().data();
+    int indice_dim = indice_tensor.dim_size(1);
+
     // Create an output tensor
     Tensor* output_tensor = NULL;
     TensorShape output_shape({batch_size, embedding_size});
@@ -286,13 +290,10 @@ public:
     if (input_size == batch_size * cols) { // input id is dense
       sparse_gather(input, batch_size, cols, weight, output, embedding_size, is_mean);
     } else { // input id is sparse
-      const Tensor& indice_tensor = context->input(3);
       OP_REQUIRES(context, (indice_tensor.dims() == 2),
                   errors::InvalidArgument("Indice tensor is not as expected (dims != 2)"));
       OP_REQUIRES(context, (indice_tensor.dim_size(0) == input_size),
                   errors::InvalidArgument("Indice tensor is not as expected (dim_size(0) != batch_size)"));
-      Tshape *indice = (Tshape *)indice_tensor.tensor_data().data();
-      int indice_dim = indice_tensor.dim_size(1);
       sparse_gather(input, input_size, indice, indice_dim, shape, batch_size,
                     cols, weight, output, embedding_size, is_mean);
     }
@@ -319,7 +320,7 @@ public:
     Tensor* unique_value_tensor = NULL;
     TensorShape unique_value_shape({unique_value.size()});
     OP_REQUIRES_OK(context, context->allocate_output(1, unique_value_shape, &unique_value_tensor));
-    Tid *output_unique_value = (float *)unique_value_tensor->tensor_data().data();
+    Tid *output_unique_value = (Tid *)unique_value_tensor->tensor_data().data();
     for (int i = 0; i < unique_value.size(); ++i) {
       output_unique_value[i] = unique_value[i];
     }
@@ -327,7 +328,7 @@ public:
     Tensor* unique_indices_tensor = NULL;
     TensorShape unique_indices_shape({unique_indices.size()});
     OP_REQUIRES_OK(context, context->allocate_output(2, unique_indices_shape, &unique_indices_tensor));
-    Tid *output_unique_indices = (float *)unique_indices_tensor->tensor_data().data();
+    Tid *output_unique_indices = (Tid *)unique_indices_tensor->tensor_data().data();
     for (int i = 0; i < unique_indices.size(); ++i) {
       output_unique_indices[i] = unique_indices[i];
     }
@@ -353,7 +354,7 @@ public:
     Tensor* cast_indice_tensor = NULL;
     TensorShape cast_indice_shape({cast_indice.size()});
     OP_REQUIRES_OK(context, context->allocate_output(3, cast_indice_shape, &cast_indice_tensor));
-    int32 *output_cast_indice = (float *)cast_indice_tensor->tensor_data().data();
+    int32 *output_cast_indice = (int32 *)cast_indice_tensor->tensor_data().data();
     for (int i = 0; i < cast_indice.size(); ++i) {
       output_cast_indice[i] = cast_indice[i];
     }
@@ -362,20 +363,21 @@ public:
     Tensor* identity_shape_tensor = NULL;
     TensorShape identity_shape_shape({2});
     OP_REQUIRES_OK(context, context->allocate_output(4, identity_shape_shape, &identity_shape_tensor));
-    int32 *output_identity_shape = (float *)identity_shape_tensor->tensor_data().data();
+    int32 *output_identity_shape = (int32 *)identity_shape_tensor->tensor_data().data();
     output_identity_shape[0] = unique_value.size();
     output_identity_shape[1] = embedding_size;
     
-    std::array<std::array<bool, embedding_size>, batch_size> tile;  // context->allocate_output(
+    // std::array<std::array<bool, embedding_size>, batch_size> tile;  // context->allocate_output(
+    std::unique_ptr<bool[]> tile(new bool[batch_size*embedding_size]);
     for (int64 i = 0; i < batch_size; ++i) {
       if (std::find(empty_rows.begin(), empty_rows.end(), batch_size) == empty_rows.end()) {
         for (int64 j = 0; j < embedding_size; j++) {
-          tile[i][j] == false;
+          tile[i*embedding_size+j] == false;
         }
       }
       else {
         for (int64 j = 0; j < embedding_size; j++) {
-          tile[i][j] == true;
+          tile[i*embedding_size+j] == true;
         }
       }
     }
@@ -383,10 +385,10 @@ public:
     Tensor* tile_tensor = NULL;
     TensorShape tile_shape({batch_size, embedding_size});
     OP_REQUIRES_OK(context, context->allocate_output(5, tile_shape, &tile_tensor));
-    bool *output_tile = (float *)tile_tensor->tensor_data().data();
+    bool *output_tile = (bool *)tile_tensor->tensor_data().data();
     for (int64 i = 0; i < batch_size; ++i) {
       for (int64 j = 0; j < embedding_size; j++) {
-        output_tile[i][j] = tile[i][j];
+        output_tile[i*embedding_size+j] = tile[i*embedding_size+j];
       }
     }
 
@@ -397,16 +399,16 @@ public:
     float *output_zeros_like = (float *)zeros_like_tensor->tensor_data().data();
     for (int64 i = 0; i < batch_size; ++i) {
       for (int64 j = 0; j < embedding_size; j++) {
-        output_tile[i][j] = 0.0;
+        output_tile[i*embedding_size+j] = 0.0;
       }
     }
 
-    Tensor* zeros_like_tensor = NULL;
-    TensorShape zeros_like_shape({2});
-    OP_REQUIRES_OK(context, context->allocate_output(7, zeros_like_shape, &zeros_like_tensor));
-    int32 *output_zeros_like = (float *)zeros_like_tensor->tensor_data().data();
-    output_zeros_like[0] = batch_size;
-    output_zeros_like[1] = embedding_size;
+    Tensor* select_tensor = NULL;
+    TensorShape select_shape({2});
+    OP_REQUIRES_OK(context, context->allocate_output(7, select_shape, &select_tensor));
+    int32 *output_select = (int32 *)select_tensor->tensor_data().data();
+    output_select[0] = batch_size;
+    output_select[1] = embedding_size;
   }
 
 private:
@@ -415,15 +417,18 @@ private:
   std::string node_name;
 };
 
-#define REGISTER_KERNEL(type)                         \
-  REGISTER_KERNEL_BUILDER(                            \
-      Name("FusedSafeEmbeddingLookupSparse")          \
-      .Device(DEVICE_CPU)                             \
-      .TypeConstraint<type>("T")                      \
-      .TypeConstraint<int64>("Tshape"),               \
-      FusedSafeEmbeddingLookupSparseOp<CPUDevice, type>);
+REGISTER_KERNEL_BUILDER(                            \
+    Name("FusedSafeEmbeddingLookupSparse")          \
+    .Device(DEVICE_CPU)                             \
+    .TypeConstraint<int32>("Tid")                   \
+    .TypeConstraint<int64>("Tshape"),               \
+    FusedSafeEmbeddingLookupSparseOp<CPUDevice, int32, int64>);
 
-TF_CALL_NUMBER_TYPES(REGISTER_KERNEL);
-#undef REGISTER_KERNEL
+REGISTER_KERNEL_BUILDER(                            \
+    Name("FusedSafeEmbeddingLookupSparse")          \
+    .Device(DEVICE_CPU)                             \
+    .TypeConstraint<int64>("Tid")                   \
+    .TypeConstraint<int64>("Tshape"),               \
+    FusedSafeEmbeddingLookupSparseOp<CPUDevice, int64, int64>);
 
 }  // namespace tensorflow

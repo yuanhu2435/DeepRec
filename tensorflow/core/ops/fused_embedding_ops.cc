@@ -239,18 +239,26 @@ REGISTER_OP("FusedEmbeddingSparsePostLookUpGrad")
 // Calculate gradient of FusedEmbeddingSparsePostLookUp
 //     )doc");
 
-REGISTER_OP("FusedSafeEmbeddingLookupSparseOp")
+
+REGISTER_OP("FusedSafeEmbeddingLookupSparse")
     .Input("weight: Tweight")
     .Input("input: Tid")
     .Input("dense_shape: Tshape")
     .Input("indice: Tshape")
     .Output("embedded: T")
-    .Output("sp_values_offset: int32")
-    .Attr("Combiner: int")
+    // .Output("sp_values_offset: int32")
+    .Output("unique_value_tensor: Tid")
+    .Output("unique_indices_shape: Tid")
+    .Output("cast_indice_shape: int32")
+    .Output("identity_shape_shape: bool")
+    .Output("tile_shape: bool")
+    .Output("zeros_like_shape: float")
+    .Output("select_shape: int32")
+    .Attr("Combiner: int = 1")
     .Attr("Tid: {int64, int32}")
     .Attr("Tshape: {int64, int32}")
     .Attr("Tweight: {float, resource}")
-    .Attr("T: {float}");
+    .Attr("T: {float}")
     .SetShapeFn([](InferenceContext* ctx) {
       ShapeHandle temp;
       TF_RETURN_IF_ERROR(ctx->WithRank(ctx->input(1), 1, &temp));
@@ -266,12 +274,6 @@ REGISTER_OP("FusedSafeEmbeddingLookupSparseOp")
       ctx->set_output(0, output_shape);
 
       return Status::OK();
-    })
-    .Doc(R"doc(
-FusedEmbedding ops that performs a local embedding lookup. The process will perform embedding vector copying from emb_variable.
-The input is usually a SparseTensor. The output sp_values_offset is reserved for gradient calculation.
-    )doc");
-    // .Attr("combiner: {'sqrtn', 'mean', 'sum'}")
-    // .Attr("max_norm: float = -1.0")
+    });
 
 }  // namespace tensorflow
