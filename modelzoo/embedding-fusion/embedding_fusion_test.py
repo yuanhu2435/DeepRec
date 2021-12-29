@@ -139,6 +139,47 @@ def _embedding_grad(op, grad, _reshape_2_shape_input_tensor,
     return _rst
 '''
 
+from tensorflow.python.ops import math_ops
+from tensorflow.python.framework import dtypes
+from tensorflow.python.framework import ops
+from tensorflow.python.ops import array_ops
+import warnings
+import tensorflow as tf
+
+@tf.RegisterGradient("FusedSafeEmbeddingLookupSparse")
+def _embedding_grad(op, grad, *all):
+    # Reshape_2_grad
+    _input0_shape = tf.shape(_reshape_2_shape_input_tensor)
+    _reshape_grad = tf.reshape(grad, _input0_shape)
+    
+    # # Select Grad
+    # _zeros_like = tf.zeros_like(_zero_like_input_tensor)
+    # _select_grad = tf.where(_tile_input_tensor, _zeros_like, _reshape_grad)
+
+    # # SparseSegmentMeanGrad
+    # dim0 = tf.shape(_gather_input_tensor)[0]
+    # _sparse_segment_mean_grad = math_ops.sparse_segment_mean_grad(_select_grad, _unique_1_input_tensor, _cast_input_tensor, dim0)
+
+    # # GatherGrad
+    # params = _weight_input_tensor
+    # with ops.colocate_with(params):
+    #     params_shape = array_ops.shape(params, out_type=ops.dtypes.int64)
+    #     params_shape = math_ops.cast(params_shape, dtypes.int32)
+
+    # # Build appropriately shaped IndexedSlices
+    # indices = _unique_0_input_tensor
+    # size = array_ops.expand_dims(array_ops.size(indices), 0)
+    # values_shape = array_ops.concat([size, params_shape[1:]], 0)
+    # with warnings.catch_warnings():
+    #     warnings.filterwarnings(
+    #         "ignore",
+    #         message="Converting sparse IndexedSlices to a dense Tensor.*")
+    #     values = array_ops.reshape(_sparse_segment_mean_grad, values_shape)
+    # indices = array_ops.reshape(indices, size)
+    # return [ops.IndexedSlices(values, indices, params_shape), None]
+    return [grad, None, None, None]
+
+
 def print_tensor(sess, tensor_name):
   print("\n### name:", tensor_name)
   out = sess.graph.get_tensor_by_name(tensor_name)
@@ -163,6 +204,7 @@ def get_model(_colors):
   with tf.name_scope("embedding"):
     hash_bucket = tf.feature_column.categorical_column_with_hash_bucket(key='colors', hash_bucket_size=10)
     column = tf.feature_column.embedding_column(hash_bucket, 4)
+    # column = tf.feature_column.embedding_column(hash_bucket, 4, do_fusion=True)
     tensor = tf.feature_column.input_layer(_colors, [column])
 
   with tf.name_scope("mlp"):

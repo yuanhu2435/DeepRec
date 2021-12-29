@@ -241,7 +241,8 @@ REGISTER_OP("FusedEmbeddingSparsePostLookUpGrad")
 
 
 REGISTER_OP("FusedSafeEmbeddingLookupSparse")
-    .Input("weight: Tweight")
+    // .Input("weight: Tweight")
+    .Input("weight: T")
     .Input("input: Tid")
     .Input("dense_shape: Tshape")
     .Input("indice: Tshape")
@@ -257,7 +258,7 @@ REGISTER_OP("FusedSafeEmbeddingLookupSparse")
     .Attr("Combiner: int = 1")
     .Attr("Tid: {int64, int32}")
     .Attr("Tshape: {int64, int32}")
-    .Attr("Tweight: {float, resource}")
+    // .Attr("Tweight: {float, resource}")
     .Attr("T: {float}")
     .SetShapeFn([](InferenceContext* ctx) {
       ShapeHandle temp;
