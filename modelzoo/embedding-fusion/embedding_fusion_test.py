@@ -145,6 +145,10 @@ from tensorflow.python.framework import ops
 from tensorflow.python.ops import array_ops
 import warnings
 import tensorflow as tf
+import numpy as np
+
+np.random.seed(3)
+tf.set_random_seed(1234)
 
 @tf.RegisterGradient("FusedSafeEmbeddingLookupSparse")
 def _embedding_grad(op, grad, *all):
@@ -186,29 +190,36 @@ def print_tensor(sess, tensor_name):
   print(out.eval())
 
 
-def print_ops(sess, op_name):
+def print_ops(sess, op_name, input_dict):
   print("\n### name:", op_name)
   out = sess.graph.get_operation_by_name(op_name)
   print(">" * 64)
   for _input in out.inputs:
     print(_input)
-    print(_input.eval())
+    print(sess.run(_input, feed_dict=input_dict))
   print("-" * 64)
   for _output in out.outputs:
     print(_output)
-    print(_output.eval())
+    print(sess.run(_output, feed_dict=input_dict))
   print("<" * 64, "\n")
 
 
-def get_model(_colors):
+def get_model(data):
+  inputs = tf.placeholder(dtype=tf.string, name="input")
+  features = {}
+  columns = []
+
   with tf.name_scope("embedding"):
-    hash_bucket = tf.feature_column.categorical_column_with_hash_bucket(key='colors', hash_bucket_size=10)
-    column = tf.feature_column.embedding_column(hash_bucket, 4)
+    feature_name = 'colors'
+    features[feature_name] = inputs
+    hash_bucket = tf.feature_column.categorical_column_with_hash_bucket(key=feature_name, hash_bucket_size=5, dtype=tf.string)
+    column = tf.feature_column.embedding_column(hash_bucket, 3, combiner='mean')
     # column = tf.feature_column.embedding_column(hash_bucket, 4, do_fusion=True)
-    tensor = tf.feature_column.input_layer(_colors, [column])
+    columns.append(column)
+    embedding = tf.feature_column.input_layer(features, columns)
 
   with tf.name_scope("mlp"):
-    layer = layers.fully_connected(tensor, 6, activation_fn=tf.nn.leaky_relu)
+    layer = layers.fully_connected(embedding, 6, activation_fn=tf.nn.leaky_relu)
 
   labels = tf.constant(1.0, shape=[5, 6], dtype=float)
 
@@ -217,32 +228,51 @@ def get_model(_colors):
 
   with tf.name_scope("optimizer"):
     train_op = tf.train.AdagradOptimizer(learning_rate=0.01, initial_accumulator_value=0.1).minimize(loss_op)
-  return train_op
+  return inputs, train_op
 
 
 def main():
-  tf.set_random_seed(2021)
-  #'green','red','blue','yellow','pink','indigo'
-  colors = {'colors': [['green','red','blue','yellow','pink','blue','red','indigo'], ['','','','','','','',''], ['','','','yellow','pink','blue','red','indigo'], ['','','','','','','',''], ['green','','','','','','','']]}
+  # colors = {'colors': [['green','red','blue','yellow','pink','blue','red','indigo'], ['','','','','','','',''], ['','','','yellow','pink','blue','red','indigo'], ['','','','','','','',''], ['green','','','','','','','']]}
 
-  train_op = get_model(colors)
+  colors_arr = ['', 'green', 'red', 'blue', 'yellow', 'pink', 'indigo']
+  data = np.random.choice(colors_arr, [5, 8], p=[0.7, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05])
+  print(data)
+  data = list(data)
+
+  inputs, train_op = get_model(data)
   init_global = tf.global_variables_initializer()
   init_local = tf.local_variables_initializer()
+  init_table = tf.tables_initializer()
 
   with tf.Session() as sess:
     tf.summary.FileWriter('./graph', sess.graph)
-    sess.run([init_global, init_local])
-    sess.run(tf.tables_initializer())
-    print(sess.run([train_op]))
+    sess.run([init_global, init_local, init_table])
 
-    input_tensor_name = ["embedding/input_layer/colors_embedding/lookup:0",
-                        "embedding/input_layer/colors_embedding/to_sparse_input/indices:0",
-                        "input_layer/colors_embedding/embedding_weights/read:0"]
-    temp_tensor_name = [""]
-    temp_ops_name = ["optimizer/gradients/embedding/input_layer/colors_embedding/colors_embedding_weights/embedding_lookup_sparse/embedding_lookup_grad/Reshape", "embedding/input_layer/colors_embedding/colors_embedding_weights/embedding_lookup_sparse/embedding_lookup"]
+    input_dict = {}
+    input_dict[inputs] = data
+    print(sess.run(train_op, feed_dict=input_dict))
 
-    for _op in temp_ops_name:
-      print_ops(sess, _op)
+    input_tensor_name = ["embedding/input_layer/colors_embedding/lookup",
+                        "embedding/input_layer/colors_embedding/to_sparse_input/indices",
+                        "input_layer/colors_embedding/embedding_weights/read"]
+    temp_tensor_name = ["embedding/input_layer/colors_embedding/colors_embedding_weights/embedding_lookup_sparse/Unique",
+                        "embedding/input_layer/colors_embedding/colors_embedding_weights/embedding_lookup_sparse/Cast",
+                        "embedding/input_layer/colors_embedding/colors_embedding_weights/embedding_lookup_sparse/embedding_lookup",
+                        "embedding/input_layer/colors_embedding/colors_embedding_weights/Tile",
+                        "embedding/input_layer/colors_embedding/colors_embedding_weights/zeros_like",
+                        "embedding/input_layer/colors_embedding/colors_embedding_weights/Reshape_2",
+                        "embedding/input_layer/concat/concat"]
+    grad_tensor_name = ["optimizer/gradients/embedding/input_layer/colors_embedding/colors_embedding_weights/embedding_lookup_sparse/embedding_lookup_grad/Reshape",
+                     "optimizer/gradients/embedding/input_layer/colors_embedding/colors_embedding_weights/embedding_lookup_sparse_grad/SparseSegmentMeanGrad"]
+
+    for _op in input_tensor_name:
+      print_ops(sess, _op, input_dict)
+
+    for _op in temp_tensor_name:
+      print_ops(sess, _op, input_dict)
+
+    for _op in grad_tensor_name:
+      print_ops(sess, _op, input_dict)
 
     # saver = tf.train.Saver(max_to_keep=2)
     # saver.save(sess, './ckpt_model/model')
