@@ -147,7 +147,7 @@ import warnings
 import tensorflow as tf
 import numpy as np
 
-np.random.seed(3)
+np.random.seed(5)
 tf.set_random_seed(1234)
 
 @tf.RegisterGradient("FusedSafeEmbeddingLookupSparse")
@@ -204,7 +204,7 @@ def print_ops(sess, op_name, input_dict):
   print("<" * 64, "\n")
 
 
-def get_model(data):
+def get_model(data, embedding_column, combiner):
   inputs = tf.placeholder(dtype=tf.string, name="input")
   features = {}
   columns = []
@@ -213,7 +213,7 @@ def get_model(data):
     feature_name = 'colors'
     features[feature_name] = inputs
     hash_bucket = tf.feature_column.categorical_column_with_hash_bucket(key=feature_name, hash_bucket_size=5, dtype=tf.string)
-    column = tf.feature_column.embedding_column(hash_bucket, 3, combiner='mean')
+    column = tf.feature_column.embedding_column(hash_bucket, embedding_column, combiner=combiner)
     # column = tf.feature_column.embedding_column(hash_bucket, 4, do_fusion=True)
     columns.append(column)
     embedding = tf.feature_column.input_layer(features, columns)
@@ -239,7 +239,9 @@ def main():
   print(data)
   data = list(data)
 
-  inputs, train_op = get_model(data)
+  embedding_column = 4
+  combiner = 'sum'
+  inputs, train_op = get_model(data, embedding_column, combiner)
   init_global = tf.global_variables_initializer()
   init_local = tf.local_variables_initializer()
   init_table = tf.tables_initializer()
@@ -254,6 +256,7 @@ def main():
 
     input_tensor_name = ["embedding/input_layer/colors_embedding/lookup",
                         "embedding/input_layer/colors_embedding/to_sparse_input/indices",
+                        "embedding/input_layer/colors_embedding/to_sparse_input/dense_shape",
                         "input_layer/colors_embedding/embedding_weights/read"]
     temp_tensor_name = ["embedding/input_layer/colors_embedding/colors_embedding_weights/embedding_lookup_sparse/Unique",
                         "embedding/input_layer/colors_embedding/colors_embedding_weights/embedding_lookup_sparse/Cast",
@@ -261,9 +264,36 @@ def main():
                         "embedding/input_layer/colors_embedding/colors_embedding_weights/Tile",
                         "embedding/input_layer/colors_embedding/colors_embedding_weights/zeros_like",
                         "embedding/input_layer/colors_embedding/colors_embedding_weights/Reshape_2",
-                        "embedding/input_layer/concat/concat"]
-    grad_tensor_name = ["optimizer/gradients/embedding/input_layer/colors_embedding/colors_embedding_weights/embedding_lookup_sparse/embedding_lookup_grad/Reshape",
-                     "optimizer/gradients/embedding/input_layer/colors_embedding/colors_embedding_weights/embedding_lookup_sparse_grad/SparseSegmentMeanGrad"]
+                        "embedding/input_layer/concat/concat",
+                        "embedding/input_layer/colors_embedding/colors_embedding_weights/embedding_lookup_sparse"]
+    if combiner == 'sum':
+      grad_tensor_name = ["optimizer/gradients/embedding/input_layer/colors_embedding/Reshape_grad/Shape",
+                          "optimizer/gradients/embedding/input_layer/colors_embedding/Reshape_grad/Reshape",
+                          "optimizer/gradients/embedding/input_layer/colors_embedding/colors_embedding_weights/Reshape_2_grad/Shape",
+                          "optimizer/gradients/embedding/input_layer/colors_embedding/colors_embedding_weights/Reshape_2_grad/Reshape",
+                          "optimizer/gradients/embedding/input_layer/colors_embedding/colors_embedding_weights_grad/zeros_like",
+                          "optimizer/gradients/embedding/input_layer/colors_embedding/colors_embedding_weights_grad/Select",
+                          "optimizer/gradients/embedding/input_layer/colors_embedding/colors_embedding_weights_grad/Select_1",
+                          "optimizer/gradients/embedding/input_layer/colors_embedding/colors_embedding_weights/embedding_lookup_sparse_grad/Shape",
+                          "optimizer/gradients/embedding/input_layer/colors_embedding/colors_embedding_weights/embedding_lookup_sparse_grad/strided_slice",
+                          'optimizer/gradients/embedding/input_layer/colors_embedding/colors_embedding_weights/embedding_lookup_sparse_grad/GatherV2',
+                          "optimizer/gradients/embedding/input_layer/colors_embedding/colors_embedding_weights/embedding_lookup_sparse_grad/UnsortedSegmentSum",
+                          "optimizer/gradients/embedding/input_layer/colors_embedding/colors_embedding_weights/embedding_lookup_sparse/embedding_lookup_grad/Reshape"]
+    elif combiner == 'mean':
+      grad_tensor_name = ["optimizer/gradients/embedding/input_layer/colors_embedding/Reshape_grad/Shape",
+                          "optimizer/gradients/embedding/input_layer/colors_embedding/Reshape_grad/Reshape",
+                          "optimizer/gradients/embedding/input_layer/colors_embedding/colors_embedding_weights/Reshape_2_grad/Shape",
+                          "optimizer/gradients/embedding/input_layer/colors_embedding/colors_embedding_weights/Reshape_2_grad/Reshape",
+                          "optimizer/gradients/embedding/input_layer/colors_embedding/colors_embedding_weights_grad/zeros_like",
+                          "optimizer/gradients/embedding/input_layer/colors_embedding/colors_embedding_weights_grad/Select",
+                          "optimizer/gradients/embedding/input_layer/colors_embedding/colors_embedding_weights_grad/Select_1",
+                          "optimizer/gradients/embedding/input_layer/colors_embedding/colors_embedding_weights/embedding_lookup_sparse_grad/Shape",
+                          "optimizer/gradients/embedding/input_layer/colors_embedding/colors_embedding_weights/embedding_lookup_sparse_grad/strided_slice",
+                          "optimizer/gradients/embedding/input_layer/colors_embedding/colors_embedding_weights/embedding_lookup_sparse_grad/SparseSegmentMeanGrad",
+                          "optimizer/gradients/embedding/input_layer/colors_embedding/colors_embedding_weights/embedding_lookup_sparse/embedding_lookup_grad/Reshape"]
+    else:
+        print("combiner value error")
+        sys.exit()
 
     for _op in input_tensor_name:
       print_ops(sess, _op, input_dict)
