@@ -29,6 +29,7 @@ from tensorflow.python.framework import constant_op
 from tensorflow.python.ops import nn_impl
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import math_ops
+from tensorflow.python.ops import fused_embedding_ops
 from tensorflow.python.ops import lookup_ops
 from tensorflow.python.ops import variables as variables_lib
 from tensorflow.python.platform import test
@@ -39,7 +40,7 @@ from tensorflow.python.summary.writer import writer
 
 def _initialized_session(graph=None, config=None):
   sess = session.Session(graph=graph, config=config)
-  writer.FileWriter('/home/marvin/DeepRec/graph', sess.graph)
+  writer.FileWriter('/root/DeepRec/graph_fusion', sess.graph)
   sess.run(variables_lib.global_variables_initializer())
   sess.run(lookup_ops.tables_initializer())
   return sess
@@ -60,6 +61,7 @@ def print_ops(sess, op_name):
 
 @ops.RegisterGradient("FusedSafeEmbeddingLookupSparse")
 def _embedding_grad(op, grad):
+
     # Reshape_2_grad
     # _input0_shape = tf.shape(_reshape_2_shape_input_tensor)
     # _reshape_grad = tf.reshape(grad, _input0_shape)
@@ -89,8 +91,11 @@ def _embedding_grad(op, grad):
     #     values = array_ops.reshape(_sparse_segment_mean_grad, values_shape)
     # indices = array_ops.reshape(indices, size)
     # return [ops.IndexedSlices(values, indices, params_shape), None]
-    grad = array_ops.concat([grad, grad], 0)
-    return [grad, None, None, None, None]
+
+    print(">" * 10, grad)
+    grad, unique_value = fused_embedding_ops.fused_safe_embedding_lookup_sparse_grad(gradients=grad, input=op.inputs[1], dense_shape=op.inputs[2], indices=op.inputs[3])
+    return [ops.IndexedSlices(grad, unique_value, op.inputs[2]), None, None, None, None]
+    # return [grad, unique_value, None, None, None]
 
 
 class EmbeddingColumnTest(test.TestCase):
@@ -107,7 +112,7 @@ class EmbeddingColumnTest(test.TestCase):
                     ]
             }
         hash_bucket = fc.categorical_column_with_hash_bucket(key='colors', hash_bucket_size=10)
-        embedding_column = fc.embedding_column(hash_bucket, dimension=4, do_fusion=do_fusion)
+        embedding_column = fc.embedding_column(hash_bucket, dimension=4, do_fusion=do_fusion, combiner='sum')
         _input = fc_old.input_layer(features, [embedding_column])
 
     labels = constant_op.constant(1.0, shape=[5, 4], dtype=float)
@@ -129,34 +134,41 @@ class EmbeddingColumnTest(test.TestCase):
             # print(">" * 64, "\n")
             # print(sess.run(train_op))
             # print("<" * 64, "\n")
-            
-            sess.run(train_op)
-            
+
             common_tensor = [
                 # "gradients/input_layer/colors_embedding/Reshape_grad/Reshape",
-                "input_layer/colors_embedding/embedding_weights/read",
-                "embedding/input_layer/concat/concat",
-                "embedding/input_layer/colors_embedding/Reshape",
+                # "input_layer/colors_embedding/embedding_weights/read",
+                # "embedding/input_layer/concat/concat",
+                # "embedding/input_layer/colors_embedding/Reshape",
+                # "embedding/input_layer/colors_embedding/lookup",
+                # "optimizer/Adagrad/update_input_layer/colors_embedding/embedding_weights/UnsortedSegmentSum",
+                "optimizer/Adagrad/update_input_layer/colors_embedding/embedding_weights/SparseApplyAdagrad",
             ]
             for _op_name in common_tensor:
                 print_ops(sess, _op_name)
                 
             for _op_name in check_tensor:
                 print_ops(sess, _op_name)
+
+            sess.run(train_op)
     pass
 
   @test_util.run_deprecated_v1
   def test_fusion_embedding_origin(self):
     check_tensor = [
             # "input_layer/colors_embedding/colors_embedding_weights/embedding_lookup_sparse/embedding_lookup",
+            # "optimizer/gradients/embedding/input_layer/colors_embedding/colors_embedding_weights/embedding_lookup_sparse/embedding_lookup_grad/Reshape",
+            # "embedding/input_layer/colors_embedding/colors_embedding_weights/embedding_lookup_sparse/UniqueWithCounts",
         ]
-    # self._base_model(check_tensor=check_tensor)
+    self._base_model(check_tensor=check_tensor)
 
   @test_util.run_deprecated_v1
   def test_fusion_embedding_fusion(self):
     check_tensor = [
             # "gradients/input_layer/colors_embedding/Reshape_grad/Reshape",
-            "embedding/input_layer/colors_embedding/colors_embedding_weights/FusedSafeEmbeddingLookupSparse",
+            # "embedding/input_layer/colors_embedding/colors_embedding_weights/FusedSafeEmbeddingLookupSparse",
+            # "optimizer/Adagrad/update_input_layer/colors_embedding/embedding_weights/SparseApplyAdagrad",
+            # "embedding/input_layer/colors_embedding/colors_embedding_weights/FusedSafeEmbeddingLookupSparse",
         ]
     self._base_model(True, check_tensor=check_tensor)
 

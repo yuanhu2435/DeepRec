@@ -11,6 +11,7 @@ from tensorflow.python.framework import sparse_tensor
 from tensorflow.python.ops import gen_fused_embedding_ops
 from tensorflow.python.ops.kv_variable_ops import EmbeddingVariable
 from tensorflow.python.ops.gen_fused_embedding_ops import fused_safe_embedding_lookup_sparse
+from tensorflow.python.ops.gen_fused_embedding_ops import fused_safe_embedding_lookup_sparse_grad
 from tensorflow.python.ops.gen_fused_embedding_ops import fused_embedding_sparse_pre_look_up
 from tensorflow.python.ops.gen_fused_embedding_ops import fused_embedding_sparse_post_look_up
 from tensorflow.python.ops.gen_fused_embedding_ops import fused_embedding_sparse_post_look_up_grad
