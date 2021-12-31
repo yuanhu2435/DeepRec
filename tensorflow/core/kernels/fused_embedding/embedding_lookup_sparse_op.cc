@@ -454,17 +454,17 @@ public:
   void Compute(OpKernelContext* context) override {
     // Grab gradients
     using Tgradients = float;
-    const Tensor* gradients_tensor = &context->input(0);
+    const Tensor& gradients_tensor = context->input(0);
     Tgradients *gradients = (Tgradients *)gradients_tensor.tensor_data().data();
     OP_REQUIRES(context, (gradients_tensor.dims() == 2),
                 errors::InvalidArgument("Gradients tensor is not valid (dims != 2)"));
-    int64 gradients_row = gradients_tensor->dim_size(0);
-    int64 gradients_col = gradients_tensor->dim_size(1); // embedding table column == embedding_col
+    int64 gradients_row = gradients_tensor.dim_size(0);
+    int64 gradients_col = gradients_tensor.dim_size(1); // embedding table column == embedding_col
 
     // Grad embedding_shape
     const Tensor& embedding_shape_tensor = context->input(1); // may be bypassed
     int64 *embedding_shape = (int64 *)embedding_shape_tensor.tensor_data().data();
-    int64 embedding_col = embedding_shape_tensor->dim_size(1);
+    int64 embedding_col = embedding_shape_tensor.dim_size(1);
     OP_REQUIRES(context, (gradients_col == embedding_col),
                 errors::InvalidArgument("gradients column is not same as embedding column)"));
 
@@ -510,12 +510,6 @@ public:
     // Grad combiner
     bool is_mean = (combiner == 1);
 
-    // Create an output tensor
-    Tensor* output_tensor = NULL;
-    TensorShape output_shape({unique_value.size(), embedding_col});
-    OP_REQUIRES_OK(context, context->allocate_output(0, output_shape, &output_tensor));
-    Tgradients *output = (Tgradients *)output_tensor->tensor_data().data();
-
     // compute unique value and indices of input hash value
     std::vector<Tinput> unique_value;
     std::vector<Tinput> unique_indices;
@@ -536,36 +530,46 @@ public:
         }
     }
 
-    if (input_size == batch_size * input_cols) { // input id is dense
-      // sparse_gather(input, batch_size, input_cols, weight, output, embedding_col, is_mean);
-    } else { // input id is sparse
-      uint64 rows = unique_indices.size();
-      std::unique_ptr<int64> row_values(new int[rows]);
-      for (int64 i = 0; i < rows; ++i) {
-        if (row_values[i] > 0) {
-          add(output[unique_indices[i]*embedding_col], gradients[indices[i]*embedding_col], embedding_col);
-        } else {
-          copy(output[unique_indices[i]*embedding_col], gradients[indices[i]*embedding_col], embedding_col);
-        }
-        row_values[i] += 1;
+    // Create an output tensor
+    Tensor* output_tensor = NULL;
+    TensorShape output_shape({unique_value.size(), embedding_col});
+    OP_REQUIRES_OK(context, context->allocate_output(0, output_shape, &output_tensor));
+    Tgradients *output = (Tgradients *)output_tensor->tensor_data().data();
+
+    // if (input_size == batch_size * input_cols) { // input id is dense
+    // } else { // input id is sparse
+    // }
+
+    uint64 rows = unique_indices.size();
+    std::vector<int64> row_values;
+    row_values.reserve(input_size);
+    for (int64 i = 0; i < rows; ++i) {
+      if (row_values[i] > 0) {
+        add(&output[unique_indices[i]*embedding_col], &gradients[indices[i]*embedding_col], embedding_col);
+      } else {
+        copy(&output[unique_indices[i]*embedding_col], &gradients[indices[i]*embedding_col], embedding_col);
       }
+      row_values[i] += 1;
     }
   }
 
 private:
-  void copy(Tgradients *dst, Tgradients *src, int64 num) {
-    memcpy(dst, src, num * sizeof(Tgradients));
+  template <typename T>
+  void copy(T* dst, const T* src, const int64 num) {
+    memcpy(dst, src, num * sizeof(T));
   }
 
-  void add(Tgradients *dst, Tgradients *src, int64 num) {
+  template <typename T>
+  void add(T* dst, const T* src, const int64 num) {
     for (int64 i = 0; i < num; ++i) {
-        dst[i] += src[i];
+      dst[i] += src[i];
     }
   }
 
-  void scale(Tgradients *dst, Tgradients factor, int64 num) {
+  template <typename T>
+  void scale(T* dst, const T factor, const int64 num) {
     for (int64 i = 0; i < num; ++i) {
-        dst[i] *= factor;
+      dst[i] *= factor;
     }
   }
 
