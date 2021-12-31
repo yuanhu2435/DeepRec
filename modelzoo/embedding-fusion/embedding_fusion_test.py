@@ -263,6 +263,7 @@ def main():
                         "embedding/input_layer/colors_embedding/colors_embedding_weights/embedding_lookup_sparse/embedding_lookup",
                         "embedding/input_layer/colors_embedding/colors_embedding_weights/Tile",
                         "embedding/input_layer/colors_embedding/colors_embedding_weights/zeros_like",
+                        "embedding/input_layer/colors_embedding/colors_embedding_weights",
                         "embedding/input_layer/colors_embedding/colors_embedding_weights/Reshape_2",
                         "embedding/input_layer/concat/concat",
                         "embedding/input_layer/colors_embedding/colors_embedding_weights/embedding_lookup_sparse"]
@@ -278,7 +279,9 @@ def main():
                           "optimizer/gradients/embedding/input_layer/colors_embedding/colors_embedding_weights/embedding_lookup_sparse_grad/strided_slice",
                           'optimizer/gradients/embedding/input_layer/colors_embedding/colors_embedding_weights/embedding_lookup_sparse_grad/GatherV2',
                           "optimizer/gradients/embedding/input_layer/colors_embedding/colors_embedding_weights/embedding_lookup_sparse_grad/UnsortedSegmentSum",
-                          "optimizer/gradients/embedding/input_layer/colors_embedding/colors_embedding_weights/embedding_lookup_sparse/embedding_lookup_grad/Reshape"]
+                          "optimizer/gradients/embedding/input_layer/colors_embedding/colors_embedding_weights/embedding_lookup_sparse/embedding_lookup_grad/Size",
+                          "optimizer/gradients/embedding/input_layer/colors_embedding/colors_embedding_weights/embedding_lookup_sparse/embedding_lookup_grad/Reshape",
+                          "optimizer/gradients/embedding/input_layer/colors_embedding/colors_embedding_weights/embedding_lookup_sparse/embedding_lookup_grad/Reshape_1"]
     elif combiner == 'mean':
       grad_tensor_name = ["optimizer/gradients/embedding/input_layer/colors_embedding/Reshape_grad/Shape",
                           "optimizer/gradients/embedding/input_layer/colors_embedding/Reshape_grad/Reshape",
@@ -290,7 +293,9 @@ def main():
                           "optimizer/gradients/embedding/input_layer/colors_embedding/colors_embedding_weights/embedding_lookup_sparse_grad/Shape",
                           "optimizer/gradients/embedding/input_layer/colors_embedding/colors_embedding_weights/embedding_lookup_sparse_grad/strided_slice",
                           "optimizer/gradients/embedding/input_layer/colors_embedding/colors_embedding_weights/embedding_lookup_sparse_grad/SparseSegmentMeanGrad",
-                          "optimizer/gradients/embedding/input_layer/colors_embedding/colors_embedding_weights/embedding_lookup_sparse/embedding_lookup_grad/Reshape"]
+                          "optimizer/gradients/embedding/input_layer/colors_embedding/colors_embedding_weights/embedding_lookup_sparse/embedding_lookup_grad/Size",
+                          "optimizer/gradients/embedding/input_layer/colors_embedding/colors_embedding_weights/embedding_lookup_sparse/embedding_lookup_grad/Reshape",
+                          "optimizer/gradients/embedding/input_layer/colors_embedding/colors_embedding_weights/embedding_lookup_sparse/embedding_lookup_grad/Reshape_1"]
     else:
         print("combiner value error")
         sys.exit()
