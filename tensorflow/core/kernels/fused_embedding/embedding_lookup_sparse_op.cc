@@ -338,18 +338,11 @@ public:
     OP_REQUIRES(context, (gradients_tensor.dims() == 2),
                 errors::InvalidArgument("Gradients tensor is not valid (dims != 2)"));
     int64 gradients_row = gradients_tensor.dim_size(0);
-    int64 gradients_col = gradients_tensor.dim_size(1); // embedding table column == embedding_col
-
-    // Grad embedding_shape
-    const Tensor& embedding_shape_tensor = context->input(1); // may be bypassed
-    int64 *embedding_shape = (int64 *)embedding_shape_tensor.tensor_data().data();
-    int64 embedding_col = embedding_shape_tensor.dim_size(1);
-    OP_REQUIRES(context, (gradients_col == embedding_col),
-                errors::InvalidArgument("gradients column is not same as embedding column)"));
+    int64 embedding_col = gradients_tensor.dim_size(1);
 
     // Grad input hash value
     using Tinput = int64;
-    const Tensor& input_tensor = context->input(2);
+    const Tensor& input_tensor = context->input(1);
     Tinput *input = (Tinput *)input_tensor.tensor_data().data();
     int64 input_size = 1;
     for (int i = 0; i < input_tensor.dims(); ++i) {
@@ -357,13 +350,13 @@ public:
     }
 
     // Grad input dense shape
-    const Tensor& dense_shape_tensor = context->input(3);
+    const Tensor& dense_shape_tensor = context->input(2);
     Tdense_shape *dense_shape = (Tdense_shape *)dense_shape_tensor.tensor_data().data();
     OP_REQUIRES(context, (dense_shape_tensor.dims() == 1),
                 errors::InvalidArgument("Shape tensor is not valid (dims != 1)"));
     OP_REQUIRES(context, (dense_shape_tensor.dim_size(0) >= 2),
                 errors::InvalidArgument("Shape tensor is not valid (dim_size(0) < 2)"));
-    int input_dims = dense_shape_tensor.dims();
+    int input_dims = dense_shape_tensor.dim_size(0);
     int input_cols = dense_shape[input_dims - 1];
     int batch_size = 1;
     for (int i = 0; i < input_dims - 1; ++i) {
@@ -373,7 +366,7 @@ public:
                 errors::InvalidArgument("gradients row is not same as batch_size)"));
 
     // Grad indices value
-    const Tensor& indices_tensor = context->input(4);
+    const Tensor& indices_tensor = context->input(3);
     Tindices *indices_ptr = (Tindices *)indices_tensor.tensor_data().data();
     int indices_row = indices_tensor.dim_size(0);
     int indices_col = indices_tensor.dim_size(1);
@@ -401,13 +394,23 @@ public:
         }
         auto it = std::find(unique_value.begin(), unique_value.end(), id);
         if (it == unique_value.end()) { // no find
+          unique_indices.push_back(unique_value.size());
           unique_value.push_back(id);
-          unique_indices.push_back(unique_value.size() + 1);
         }
         else {
           unique_indices.push_back(it - unique_value.begin());
         }
     }
+
+    // printf("unique_indices: ");
+    // for (int i = 0; i < unique_indices.size(); ++i)
+    //   printf("%d ", unique_indices[i]);
+    // printf("\n");
+
+    // printf("indices: ");
+    // for (int i = 0; i < indices.size(); ++i)
+    //   printf("%d ", indices[i]);
+    // printf("\n");
 
     // Create an output tensor
     Tensor* output_tensor = NULL;
@@ -415,20 +418,29 @@ public:
     OP_REQUIRES_OK(context, context->allocate_output(0, output_shape, &output_tensor));
     Tgradients *output = (Tgradients *)output_tensor->tensor_data().data();
 
+    Tensor* unique_tensor = NULL;
+    TensorShape unique_shape({unique_value.size()});
+    OP_REQUIRES_OK(context, context->allocate_output(1, unique_shape, &unique_tensor));
+    Tinput *unique = (Tinput *)unique_tensor->tensor_data().data();
+
+    int64 unique_num = unique_value.size();
+    for (int64 i = 0; i < unique_num; ++i) {
+      unique[i] = unique_value[i];
+    }
+
     // if (input_size == batch_size * input_cols) { // input id is dense
     // } else { // input id is sparse
     // }
 
     uint64 rows = unique_indices.size();
-    std::vector<int64> row_values;
-    row_values.reserve(input_size);
+    std::vector<int64> row_values(unique_value.size(), 0);
     for (int64 i = 0; i < rows; ++i) {
-      if (row_values[i] > 0) {
+      if (row_values[unique_indices[i]] > 0) {
         add(&output[unique_indices[i]*embedding_col], &gradients[indices[i]*embedding_col], embedding_col);
       } else {
         copy(&output[unique_indices[i]*embedding_col], &gradients[indices[i]*embedding_col], embedding_col);
       }
-      row_values[i] += 1;
+      row_values[unique_indices[i]] += 1;
     }
   }
 

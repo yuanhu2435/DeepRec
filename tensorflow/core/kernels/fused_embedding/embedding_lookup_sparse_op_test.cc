@@ -439,6 +439,80 @@ TEST_F(FusedEmbeddingLocalSparseLookUpOpTest, EmbeddingLocalSparseLookUpFloatSqr
   // test::ExpectTensorEqual<int32>(sp_values_offset_expected, values_offset);
 }
 
+TEST_F(FusedEmbeddingLocalSparseLookUpOpTest, GradFloatCpu) {
+
+  TF_EXPECT_OK(NodeDefBuilder("FusedSafeEmbeddingLookupSparseGrad",
+                              "FusedSafeEmbeddingLookupSparseGrad")
+                    .Input(FakeInput(DT_FLOAT)) // gradients
+                    .Input(FakeInput(DT_INT64)) // input hash value
+                    .Input(FakeInput(DT_INT64)) // dense_shape
+                    .Input(FakeInput(DT_INT64)) // indices
+                    .Attr("T", DT_FLOAT)
+                    .Attr("Tindices", DT_INT64)
+                    .Attr("Tdense_shape", DT_INT64)
+                    .Attr("Combiner", 0)
+                    .Finalize(node_def()));
+  TF_EXPECT_OK(InitOp());
+
+  const int nnz = 9;
+  const int batch_size = 5;
+  const int emb_vector_dim = 4;
+  const int entries = 8;
+  const int bucket_size = 16;
+
+  Tensor sp_values(DT_INT64, {nnz});
+  Tensor sp_indices(DT_INT64, {nnz, 2});
+  Tensor sp_dense_shape(DT_INT64, {2});
+  Tensor grad_variable(DT_FLOAT, {batch_size, emb_vector_dim});
+
+  test::FillValues<int64>(&sp_values, {1, 1, 0, 4, 1, 1, 1, 0, 1});
+  test::FillValues<int64>(&sp_indices, {0, 1, 0, 3, 0, 6, 1, 3, 1, 6,
+                                        3, 3, 3, 4, 4, 1, 4, 7});
+  test::FillValues<int64>(&sp_dense_shape, {batch_size, entries});
+  test::FillValues<float>(
+      &grad_variable,
+      {0.00762837,  0.01216697, -0.00499191, -0.01903006,
+       0.00651451,  0.01179231, -0.01649910, -0.02003234,
+       0.01006079,  0.01536253, -0.00560316, -0.02492063,
+       0.00995716,  0.01542692, -0.00550190, -0.02393658,
+       0.00842724,  0.01529242, -0.00866761, -0.02398602});
+
+  AddInputFromArray<float>(grad_variable.shape(), grad_variable.flat<float>());
+  AddInputFromArray<int64>(sp_values.shape(), sp_values.flat<int64>());
+  AddInputFromArray<int64>(sp_dense_shape.shape(), sp_dense_shape.flat<int64>());
+  AddInputFromArray<int64>(sp_indices.shape(), sp_indices.flat<int64>());
+
+  TF_ASSERT_OK(RunOpKernel());
+
+  Tensor output1_tensor_expected(DT_FLOAT, {3, emb_vector_dim});
+  Tensor output2_tensor_expected(DT_INT64, {3});
+  test::FillValues<float>(&output1_tensor_expected,
+      {0.05011282, 0.08227250, -0.04615432, -0.12995164,
+       0.01605561, 0.02745938, -0.01365952, -0.04301608,
+       0.00651451, 0.01179231, -0.01649910, -0.02003234});
+  test::FillValues<int64>(&output2_tensor_expected, {1, 0, 4});
+  float *output1_ex = (float *)output1_tensor_expected.tensor_data().data();
+  int64 *output2_ex = (int64 *)output2_tensor_expected.tensor_data().data();
+
+  const Tensor& output1_tensor = *GetOutput(0);
+  const Tensor& output2_tensor = *GetOutput(1);
+
+  float *output1 = (float *)output1_tensor.tensor_data().data();
+  int64 *output2 = (int64 *)output2_tensor.tensor_data().data();
+
+  printf("out = %f , expect = %f\n", output1[0], output1_ex[0]);
+  printf("out = %f , expect = %f\n", output1[1], output1_ex[1]);
+  printf("out = %f , expect = %f\n", output1[2], output1_ex[2]);
+  printf("out = %f , expect = %f\n", output1[3], output1_ex[3]);
+
+  printf("out = %d , expect = %d\n", output2[0], output2_ex[0]);
+  printf("out = %d , expect = %d\n", output2[1], output2_ex[1]);
+  printf("out = %d , expect = %d\n", output2[2], output2_ex[2]);
+
+  test::ExpectTensorNear<float>(output1_tensor_expected, output1_tensor, 1e-4);
+  test::ExpectTensorEqual<int64>(output2_tensor_expected, output2_tensor);
+}
+
 #ifdef GOOGLE_CUDA
 TEST_F(FusedEmbeddingLocalSparseLookUpOpTest, EmbeddingLocalSparseLookUpFloatSqrtnGpu) {
   Run<float, Sqrtn>(Device::GPU);
