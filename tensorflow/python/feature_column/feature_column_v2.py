@@ -4248,7 +4248,7 @@ class EmbeddingColumn(
 
     # Return embedding lookup result.
     if self.do_fusion:
-      return embedding_ops.fused_safe_embedding_lookup_sparse(
+      return embedding_ops.fused_safe_embedding_lookup_sparse_cpu(
             embedding_weights,
             sparse_ids,
             sparse_weights=sparse_weights,

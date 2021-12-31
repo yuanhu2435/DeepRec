@@ -1379,7 +1379,7 @@ def fused_safe_embedding_lookup_sparse(embedding_weights,
 
   with ops.name_scope(name, "fused_embedding_lookup", embedding_weights +
                       [sparse_ids, sparse_weights]) as scope:
-    # Reshape higher-rank sparse ids and weights to linear segment ids.
+     # Reshape higher-rank sparse ids and weights to linear segment ids.
     original_shape = sparse_ids.dense_shape
     original_rank_dim = tensor_shape.dimension_value(
         sparse_ids.dense_shape.get_shape()[0])
@@ -1422,6 +1422,53 @@ def fused_safe_embedding_lookup_sparse(embedding_weights,
             (tensor_shape.Dimension(original_rank_dim) - 1).value).concatenate(
                 result.get_shape()[1:]))
     return final_result
+
+def fused_safe_embedding_lookup_sparse_cpu(embedding_weights,
+                                       sparse_ids,
+                                       sparse_weights=None,
+                                       combiner="mean",
+                                       default_id=None,
+                                       name=None,
+                                       partition_strategy="div",
+                                       max_norm=None,
+                                       prune=True):
+  """Functionally the same as safe_embedding_lookup_sparse but using fused embedding
+  lookup ops in this method.
+  """
+  logging.info("Is using fused embedding lookup for this scope {}".format(name))
+
+  if embedding_weights is None:
+    raise ValueError("Missing embedding_weights %s." % embedding_weights)
+  if isinstance(embedding_weights, variables.PartitionedVariable):
+    embedding_weights = list(embedding_weights)  # get underlying Variables.
+  if not isinstance(embedding_weights, list):
+    embedding_weights = [embedding_weights]
+  if len(embedding_weights) < 1:
+    raise ValueError("Missing embedding_weights %s." % embedding_weights)
+
+  dtype = sparse_weights.dtype if sparse_weights is not None else None
+  tmp_embedding_weights = []
+  for w in embedding_weights:
+    from tensorflow.python.ops.hash_table import hash_table
+    if not isinstance(w, (hash_table.DistributedHashTable, hash_table.HashTable)):
+      if not (isinstance(w, resource_variable_ops.ResourceVariable) and dtype in (None, w.dtype)):
+        w = ops.convert_to_tensor(w, dtype=dtype)
+    tmp_embedding_weights.append(w)
+  embedding_weights = tmp_embedding_weights
+
+  with ops.name_scope(name, "fused_embedding_lookup", embedding_weights +
+                      [sparse_ids, sparse_weights]) as scope:
+    return fused_embedding_ops.fused_safe_embedding_lookup_sparse(
+                                            weight=embedding_weights[0],
+                                            id_input=sparse_ids.values,
+                                            weight_input=-1,
+                                            dense_shape=sparse_ids.dense_shape,
+                                            indice=sparse_ids.indices,
+                                            combiner=combiner,
+                                            prune=prune,
+                                            max_norm=max_norm,
+                                            default_id=default_id,
+                                            partition_strategy=partition_strategy)
 
 @tf_export("nn.safe_embedding_lookup_multi_dim")
 def safe_embedding_lookup_multi_dim(embedding_weights,

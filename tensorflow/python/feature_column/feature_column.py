@@ -206,7 +206,6 @@ def _internal_input_layer(features,
             weight_collections=weight_collections,
             trainable=trainable)
         output_shape = column._output_shape(tensor)  # pylint: disable=protected-access
-        batch_size = array_ops.shape(tensor)[0]
         output_tensor = array_ops.reshape(
             tensor, shape=output_shape)
         output_tensors.append(output_tensor)
