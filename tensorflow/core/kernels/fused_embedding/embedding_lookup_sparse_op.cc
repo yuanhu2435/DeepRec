@@ -104,19 +104,19 @@ namespace {
 
     // Use memcpy or manually assign?
     static void mycopy(float *dst, float *src, int float_num) {
-    memcpy(dst, src, float_num * sizeof(float));
+      memcpy(dst, src, float_num * sizeof(float));
     }
 
     static void myadd(float *dst, float *src, int float_num) {
-    for (int i = 0; i < float_num; ++i) {
-        dst[i] += src[i];
-    }
+      for (int i = 0; i < float_num; ++i) {
+          dst[i] += src[i];
+      }
     }
 
     static void myscale(float *dst, float factor, int float_num) {
-    for (int i = 0; i < float_num; ++i) {
-        dst[i] *= factor;
-    }
+      for (int i = 0; i < float_num; ++i) {
+          dst[i] *= factor;
+      }
     }
 
     template<typename Tid, typename Tshape>
@@ -430,5 +430,162 @@ REGISTER_KERNEL_BUILDER(                            \
     .TypeConstraint<int64>("Tid")                   \
     .TypeConstraint<int64>("Tshape"),               \
     FusedSafeEmbeddingLookupSparseOp<CPUDevice, int64, int64>);
+
+
+template <typename Device, typename Tindices, typename Tdense_shape>
+class FusedSafeEmbeddingLookupSparseGradOp : public OpKernel {
+public:
+  explicit FusedSafeEmbeddingLookupSparseGradOp(OpKernelConstruction* context)
+           : OpKernel(context) {
+    OP_REQUIRES_OK(context, context->GetAttr("Combiner", &combiner));
+    //OP_REQUIRES_OK(context, context->GetAttr("Dims", &dims));
+    node_name = context->def().name();
+
+    static bool printed = false;
+    if (!printed) {
+      printf("******** FusedSafeEmbeddingLookupSparseGradOp ********\n");
+      printed = true;
+    }
+  }
+
+  ~FusedSafeEmbeddingLookupSparseGradOp() {
+  }
+
+  void Compute(OpKernelContext* context) override {
+    // Grab gradients
+    using Tgradients = float;
+    const Tensor* gradients_tensor = &context->input(0);
+    Tgradients *gradients = (Tgradients *)gradients_tensor.tensor_data().data();
+    OP_REQUIRES(context, (gradients_tensor.dims() == 2),
+                errors::InvalidArgument("Gradients tensor is not valid (dims != 2)"));
+    int64 gradients_row = gradients_tensor->dim_size(0);
+    int64 gradients_col = gradients_tensor->dim_size(1); // embedding table column == embedding_col
+
+    // Grad embedding_shape
+    const Tensor& embedding_shape_tensor = context->input(1); // may be bypassed
+    int64 *embedding_shape = (int64 *)embedding_shape_tensor.tensor_data().data();
+    int64 embedding_col = embedding_shape_tensor->dim_size(1);
+    OP_REQUIRES(context, (gradients_col == embedding_col),
+                errors::InvalidArgument("gradients column is not same as embedding column)"));
+
+    // Grad input hash value
+    using Tinput = int64;
+    const Tensor& input_tensor = context->input(2);
+    Tinput *input = (Tinput *)input_tensor.tensor_data().data();
+    int64 input_size = 1;
+    for (int i = 0; i < input_tensor.dims(); ++i) {
+      input_size *= input_tensor.dim_size(i);
+    }
+
+    // Grad input dense shape
+    const Tensor& dense_shape_tensor = context->input(3);
+    Tdense_shape *dense_shape = (Tdense_shape *)dense_shape_tensor.tensor_data().data();
+    OP_REQUIRES(context, (dense_shape_tensor.dims() == 1),
+                errors::InvalidArgument("Shape tensor is not valid (dims != 1)"));
+    OP_REQUIRES(context, (dense_shape_tensor.dim_size(0) >= 2),
+                errors::InvalidArgument("Shape tensor is not valid (dim_size(0) < 2)"));
+    int input_dims = dense_shape_tensor.dims();
+    int input_cols = dense_shape[input_dims - 1];
+    int batch_size = 1;
+    for (int i = 0; i < input_dims - 1; ++i) {
+      batch_size *= dense_shape[i];
+    }
+    OP_REQUIRES(context, (gradients_row == batch_size),
+                errors::InvalidArgument("gradients row is not same as batch_size)"));
+
+    // Grad indices value
+    const Tensor& indices_tensor = context->input(4);
+    Tindices *indices_ptr = (Tindices *)indices_tensor.tensor_data().data();
+    int indices_row = indices_tensor.dim_size(0);
+    int indices_col = indices_tensor.dim_size(1);
+    OP_REQUIRES(context, (indices_tensor.dims() == 2),
+                errors::InvalidArgument("Indice tensor is not as expected (dims != 2)"));
+    OP_REQUIRES(context, (indices_tensor.dim_size(0) == input_size),
+                errors::InvalidArgument("Indice tensor is not as expected (dim_size(0) != batch_size)"));
+    std::vector<Tinput> indices;
+    for (int64 i = 0; i < indices_row; ++i) {
+      indices.emplace_back(indices_ptr[i*indices_col]);
+    }
+
+    // Grad combiner
+    bool is_mean = (combiner == 1);
+
+    // Create an output tensor
+    Tensor* output_tensor = NULL;
+    TensorShape output_shape({unique_value.size(), embedding_col});
+    OP_REQUIRES_OK(context, context->allocate_output(0, output_shape, &output_tensor));
+    Tgradients *output = (Tgradients *)output_tensor->tensor_data().data();
+
+    // compute unique value and indices of input hash value
+    std::vector<Tinput> unique_value;
+    std::vector<Tinput> unique_indices;
+    unique_value.reserve(input_size);
+    unique_indices.reserve(input_size);
+    for (int64 i = 0; i < input_size; ++i) {
+        Tinput id = input[i];
+        if (id < 0) { // Skip invalid id
+          continue;
+        }
+        auto it = std::find(unique_value.begin(), unique_value.end(), id);
+        if (it == unique_value.end()) { // no find
+          unique_value.push_back(id);
+          unique_indices.push_back(unique_value.size() + 1);
+        }
+        else {
+          unique_indices.push_back(it - unique_value.begin());
+        }
+    }
+
+    if (input_size == batch_size * input_cols) { // input id is dense
+      // sparse_gather(input, batch_size, input_cols, weight, output, embedding_col, is_mean);
+    } else { // input id is sparse
+      uint64 rows = unique_indices.size();
+      std::unique_ptr<int64> row_values(new int[rows]);
+      for (int64 i = 0; i < rows; ++i) {
+        if (row_values[i] > 0) {
+          add(output[unique_indices[i]*embedding_col], gradients[indices[i]*embedding_col], embedding_col);
+        } else {
+          copy(output[unique_indices[i]*embedding_col], gradients[indices[i]*embedding_col], embedding_col);
+        }
+        row_values[i] += 1;
+      }
+    }
+  }
+
+private:
+  void copy(Tgradients *dst, Tgradients *src, int64 num) {
+    memcpy(dst, src, num * sizeof(Tgradients));
+  }
+
+  void add(Tgradients *dst, Tgradients *src, int64 num) {
+    for (int64 i = 0; i < num; ++i) {
+        dst[i] += src[i];
+    }
+  }
+
+  void scale(Tgradients *dst, Tgradients factor, int64 num) {
+    for (int64 i = 0; i < num; ++i) {
+        dst[i] *= factor;
+    }
+  }
+
+private:
+  int combiner = 0;   // 0=SUM, 1=MEAN
+  std::string node_name;
+};
+
+REGISTER_KERNEL_BUILDER(                            \
+    Name("FusedSafeEmbeddingLookupSparseGrad")      \
+    .Device(DEVICE_CPU)                             \
+    .TypeConstraint<int32>("Tindices")              \
+    .TypeConstraint<int64>("Tdense_shape"),         \
+    FusedSafeEmbeddingLookupSparseGradOp<CPUDevice, int32, int64>);
+
+REGISTER_KERNEL_BUILDER(                            \
+    Name("FusedSafeEmbeddingLookupSparseGrad")      \
+    .Device(DEVICE_CPU)                             \
+    .TypeConstraint<int64>("Tindices")              \
+    .TypeConstraint<int64>("Tdense_shape"),         \
+    FusedSafeEmbeddingLookupSparseGradOp<CPUDevice, int64, int64>);
 
 }  // namespace tensorflow

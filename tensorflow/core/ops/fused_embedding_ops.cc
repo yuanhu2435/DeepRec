@@ -277,4 +277,32 @@ REGISTER_OP("FusedSafeEmbeddingLookupSparse")
       return Status::OK();
     });
 
+REGISTER_OP("FusedSafeEmbeddingLookupSparseGrad")
+    .Input("gradients: T")
+    .Input("embedding_shape: int64")
+    .input("input: int64")
+    .Input("dense_shape: Tshape")
+    .Input("indice: Tid")
+    .Output("output: T")
+    .Output("unique_value: Tid")
+    .Attr("Combiner: int = 1")
+    .Attr("Tid: {int64, int32}")
+    .Attr("Tshape: {int64, int32}")
+    .Attr("T: {float}")
+    .SetShapeFn([](InferenceContext* ctx) {
+      ShapeHandle emb_var_shape;
+      TF_RETURN_IF_ERROR(ctx->WithRank(ctx->input(0), 2, &emb_var_shape));
+
+      DimensionHandle emb_vec_size_dim = ctx->Dim(emb_var_shape, 1);
+      DimensionHandle unique_dim = ctx->UnknownDim();
+
+      ShapeHandle output_shape = ctx->MakeShape({unique_dim, emb_vec_size_dim});
+      ctx->set_output(0, output_shape);
+
+      ShapeHandle unique_value_shape = ctx->MakeShape({unique_dim});
+      ctx->set_output(1, unique_value_shape);
+
+      return Status::OK();
+    });
+
 }  // namespace tensorflow
