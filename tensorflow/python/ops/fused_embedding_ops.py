@@ -98,3 +98,9 @@ def fused_embedding_sparse_post_look_up_grad(op, top_grad_emb_vec, _):
     default_id=op.get_attr("default_id")
   )
   return grad_shards + [None for _ in range(0, 2 * num_partitions + 2)]
+
+
+@ops.RegisterGradient("FusedSafeEmbeddingLookupSparse")
+def _embedding_grad(op, grad):
+    grad, unique_value = fused_safe_embedding_lookup_sparse_grad(gradients=grad, input=op.inputs[1], dense_shape=op.inputs[2], indices=op.inputs[3])
+    return [ops.IndexedSlices(grad, unique_value, op.inputs[2]), None, None, None, None]
