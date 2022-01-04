@@ -374,8 +374,9 @@ TEST_F(FusedEmbeddingLocalSparseLookUpOpTest, EmbeddingLocalSparseLookUpFloatSqr
                     .Input(FakeInput(DT_INT64))
                     .Input(FakeInput(DT_INT64))
                     .Input(FakeInput(DT_INT64))
+                    .Input(FakeInput(DT_INT64))
                     .Attr("T", DT_FLOAT)
-                    .Attr("Combiner", 0)
+                    .Attr("combiner", "sum")
                     .Finalize(node_def()));
   TF_EXPECT_OK(InitOp());
 
@@ -386,11 +387,13 @@ TEST_F(FusedEmbeddingLocalSparseLookUpOpTest, EmbeddingLocalSparseLookUpFloatSqr
   const int bucket_size = 16;
 
   Tensor sp_values(DT_INT64, {nnz});
+  Tensor sp_weight(DT_INT64, {nnz});
   Tensor sp_indices(DT_INT64, {nnz, 2});
   Tensor sp_dense_shape(DT_INT64, {2});
   Tensor emb_variable(DT_FLOAT, {bucket_size, emb_vector_dim});
 
   test::FillValues<int64>(&sp_values, {3, 1, 4, 5, 7, 3, 12, 12, 15, 4});
+  test::FillValues<int64>(&sp_weight, {3, 1, 4, 5, 7, 3, 12, 12, 15, 4});
   test::FillValues<int64>(&sp_indices, {0, 1, 0, 5, 1, 2, 1, 1, 1, 7,
                                         2, 1, 2, 4, 2, 7, 3, 0, 3, 6});
   test::FillValues<int64>(&sp_dense_shape, {batch_size, entries});
@@ -430,12 +433,12 @@ TEST_F(FusedEmbeddingLocalSparseLookUpOpTest, EmbeddingLocalSparseLookUpFloatSqr
   float *output = (float *)emb_vector.tensor_data().data();
   float *output_ex = (float *)emb_vector_expected.tensor_data().data();
 
-  printf("out = %f , expect = %f\n", output[0], output_ex[0]);
-  printf("out = %f , expect = %f\n", output[1], output_ex[1]);
-  printf("out = %f , expect = %f\n", output[2], output_ex[2]);
-  printf("out = %f , expect = %f\n", output[3], output_ex[3]);
+  // printf("out = %f , expect = %f\n", output[0], output_ex[0]);
+  // printf("out = %f , expect = %f\n", output[1], output_ex[1]);
+  // printf("out = %f , expect = %f\n", output[2], output_ex[2]);
+  // printf("out = %f , expect = %f\n", output[3], output_ex[3]);
 
-  test::ExpectTensorNear<float>(emb_vector_expected, emb_vector, 1e-4);
+  test::ExpectTensorNear<float>(emb_vector_expected, emb_vector, 1e-8);
   // test::ExpectTensorEqual<int32>(sp_values_offset_expected, values_offset);
 }
 
@@ -500,16 +503,16 @@ TEST_F(FusedEmbeddingLocalSparseLookUpOpTest, GradFloatCpu) {
   float *output1 = (float *)output1_tensor.tensor_data().data();
   int64 *output2 = (int64 *)output2_tensor.tensor_data().data();
 
-  printf("out = %f , expect = %f\n", output1[0], output1_ex[0]);
-  printf("out = %f , expect = %f\n", output1[1], output1_ex[1]);
-  printf("out = %f , expect = %f\n", output1[2], output1_ex[2]);
-  printf("out = %f , expect = %f\n", output1[3], output1_ex[3]);
+  // printf("out = %f , expect = %f\n", output1[0], output1_ex[0]);
+  // printf("out = %f , expect = %f\n", output1[1], output1_ex[1]);
+  // printf("out = %f , expect = %f\n", output1[2], output1_ex[2]);
+  // printf("out = %f , expect = %f\n", output1[3], output1_ex[3]);
 
-  printf("out = %d , expect = %d\n", output2[0], output2_ex[0]);
-  printf("out = %d , expect = %d\n", output2[1], output2_ex[1]);
-  printf("out = %d , expect = %d\n", output2[2], output2_ex[2]);
+  // printf("out = %d , expect = %d\n", output2[0], output2_ex[0]);
+  // printf("out = %d , expect = %d\n", output2[1], output2_ex[1]);
+  // printf("out = %d , expect = %d\n", output2[2], output2_ex[2]);
 
-  test::ExpectTensorNear<float>(output1_tensor_expected, output1_tensor, 1e-4);
+  test::ExpectTensorNear<float>(output1_tensor_expected, output1_tensor, 1e-8);
   test::ExpectTensorEqual<int64>(output2_tensor_expected, output2_tensor);
 }
 
