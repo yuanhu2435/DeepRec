@@ -148,6 +148,7 @@ import tensorflow as tf
 import numpy as np
 
 np.random.seed(5)
+np.set_printoptions(precision=10)
 tf.set_random_seed(1234)
 
 @tf.RegisterGradient("FusedSafeEmbeddingLookupSparse")
@@ -240,7 +241,7 @@ def main():
   data = list(data)
 
   embedding_column = 4
-  combiner = 'sum'
+  combiner = 'mean'
   inputs, train_op = get_model(data, embedding_column, combiner)
   init_global = tf.global_variables_initializer()
   init_local = tf.local_variables_initializer()

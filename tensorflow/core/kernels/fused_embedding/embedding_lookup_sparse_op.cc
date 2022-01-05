@@ -5,6 +5,7 @@
 #include "tensorflow/core/framework/shape_inference.h"
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/framework/resource_var.h"
+#include "tensorflow/core/framework/bounds_check.h"
 
 namespace tensorflow {
 
@@ -311,13 +312,130 @@ REGISTER_KERNEL_BUILDER(                                        \
     FusedSafeEmbeddingLookupSparseOp<CPUDevice, int64, int64>);
 
 
-template <typename Device, typename Tindices, typename Tdense_shape>
+enum class SparseSegmentReductionOperation { kSum, kMean, kSqrtN };
+
+namespace functor {
+
+template <typename T, typename Index, typename SegmentId>
+struct SparseSegmentGradFunctor {
+  void operator()(OpKernelContext* context,
+                  SparseSegmentReductionOperation operation,
+                  typename TTypes<T>::ConstMatrix input_flat,
+                  typename TTypes<Index>::ConstVec indices_vec,
+                  typename TTypes<SegmentId>::ConstVec segment_vec,
+                  typename TTypes<T>::Matrix output_flat) {
+    const int64_t N = indices_vec.size();
+    const SegmentId M = output_flat.dimension(0);
+
+    // Note that similar to SparseSegmentMean, we assume that segment_vec is
+    // already sorted and has non-negative values.
+    const SegmentId num_segments = input_flat.dimension(0);
+    const SegmentId last_segment_id_plus_one =
+        internal::SubtleMustCopy(segment_vec(N - 1)) + 1;
+    OP_REQUIRES(context, last_segment_id_plus_one <= num_segments,
+                errors::InvalidArgument("Invalid number of segments"));
+
+    // Compute scaling factors for input.
+    std::vector<double> scaling(
+        (operation == SparseSegmentReductionOperation::kSum ? 0 : num_segments),
+        0.0);
+    if (operation != SparseSegmentReductionOperation::kSum) {
+      for (int64_t i = 0; i < N; ++i) {
+        const SegmentId idx = internal::SubtleMustCopy(segment_vec(i));
+        OP_REQUIRES(
+            context, FastBoundsCheck(idx, num_segments),
+            errors::InvalidArgument("Segment id ", idx, " out of range [0, ",
+                                    num_segments, ")."));
+        scaling[idx] += 1;
+      }
+      for (size_t i = 0; i < scaling.size(); ++i) {
+        switch (operation) {
+          case SparseSegmentReductionOperation::kSum: {
+            OP_REQUIRES(
+                context, false,
+                errors::Internal(
+                    "Should not happen: sum inside SparseSegmentReductionOp "
+                    "scaling generation."));
+          }
+          case SparseSegmentReductionOperation::kMean: {
+            scaling[i] = 1.0 / std::max(scaling[i], 1.0);
+            break;
+          }
+          case SparseSegmentReductionOperation::kSqrtN: {
+            scaling[i] = 1.0 / sqrt(std::max(scaling[i], 1.0));
+            break;
+          }
+            // No default to get compiler warnings for missing cases.
+        }
+      }
+    }
+
+    output_flat.setZero();
+    std::vector<bool> is_modified(M, false);
+
+    for (int64_t i = 0; i < N; ++i) {
+      const Index output_idx = internal::SubtleMustCopy(indices_vec(i));
+      OP_REQUIRES(context, FastBoundsCheck(output_idx, M),
+                  errors::InvalidArgument("Index ", output_idx,
+                                          " out of range [0, ", M, ")."));
+
+      const SegmentId idx = internal::SubtleMustCopy(segment_vec(i));
+      OP_REQUIRES(
+          context, FastBoundsCheck(idx, num_segments),
+          errors::InvalidArgument("Segment id ", idx, " out of range [0, ",
+                                  num_segments, ")."));
+
+      const T scale = (operation == SparseSegmentReductionOperation::kSum
+                           ? static_cast<T>(1)
+                           : static_cast<T>(scaling[idx]));
+      if (is_modified[output_idx]) {
+        if (scale == 1.0) {
+          output_flat.template chip<0>(output_idx) +=
+              input_flat.template chip<0>(idx);
+        } else {
+          output_flat.template chip<0>(output_idx) +=
+              input_flat.template chip<0>(idx) * scale;
+        }
+      } else {
+        if (scale == 1.0) {
+          output_flat.template chip<0>(output_idx) =
+              input_flat.template chip<0>(idx);
+        } else {
+          output_flat.template chip<0>(output_idx) =
+              input_flat.template chip<0>(idx) * scale;
+        }
+      }
+      is_modified[output_idx] = true;
+    }
+  }
+};
+
+}  // namespace functor
+
+template <typename Device, typename T, typename Tinput, typename Tindices, typename Tdense_shape>
 class FusedSafeEmbeddingLookupSparseGradOp : public OpKernel {
 public:
   explicit FusedSafeEmbeddingLookupSparseGradOp(OpKernelConstruction* context)
            : OpKernel(context) {
     OP_REQUIRES_OK(context, context->GetAttr("Combiner", &combiner));
     //OP_REQUIRES_OK(context, context->GetAttr("Dims", &dims));
+
+    switch (combiner) {
+      case 0: {
+        operation_ = SparseSegmentReductionOperation::kSum;
+        break;
+      }
+      case 1: {
+        operation_ = SparseSegmentReductionOperation::kMean;
+        break;
+      }
+      case 2: {
+        operation_ = SparseSegmentReductionOperation::kSqrtN;
+        break;
+      }
+        // No default to get compiler warnings for missing cases.
+    }
+
     node_name = context->def().name();
 
     static bool printed = false;
@@ -332,16 +450,14 @@ public:
 
   void Compute(OpKernelContext* context) override {
     // Grab gradients
-    using Tgradients = float;
     const Tensor& gradients_tensor = context->input(0);
-    Tgradients *gradients = (Tgradients *)gradients_tensor.tensor_data().data();
+    T *gradients = (T *)gradients_tensor.tensor_data().data();
     OP_REQUIRES(context, (gradients_tensor.dims() == 2),
                 errors::InvalidArgument("Gradients tensor is not valid (dims != 2)"));
     int64 gradients_row = gradients_tensor.dim_size(0);
     int64 embedding_col = gradients_tensor.dim_size(1);
 
     // Grad input hash value
-    using Tinput = int64;
     const Tensor& input_tensor = context->input(1);
     Tinput *input = (Tinput *)input_tensor.tensor_data().data();
     int64 input_size = 1;
@@ -349,8 +465,22 @@ public:
       input_size *= input_tensor.dim_size(i);
     }
 
+    // Grad indices value
+    const Tensor& indices_tensor = context->input(2);
+    Tindices *indices_ptr = (Tindices *)indices_tensor.tensor_data().data();
+    int indices_row = indices_tensor.dim_size(0);
+    int indices_col = indices_tensor.dim_size(1);
+    OP_REQUIRES(context, (indices_tensor.dims() == 2),
+                errors::InvalidArgument("Indice tensor is not as expected (dims != 2)"));
+    OP_REQUIRES(context, (indices_tensor.dim_size(0) == input_size),
+                errors::InvalidArgument("Indice tensor is not as expected (dim_size(0) != batch_size)"));
+    std::vector<Tindices> input_indices; // collect first col
+    for (int64 i = 0; i < indices_row; ++i) {
+      input_indices.emplace_back(indices_ptr[i*indices_col]);
+    }
+
     // Grad input dense shape
-    const Tensor& dense_shape_tensor = context->input(2);
+    const Tensor& dense_shape_tensor = context->input(3);
     Tdense_shape *dense_shape = (Tdense_shape *)dense_shape_tensor.tensor_data().data();
     OP_REQUIRES(context, (dense_shape_tensor.dims() == 1),
                 errors::InvalidArgument("Shape tensor is not valid (dims != 1)"));
@@ -365,22 +495,8 @@ public:
     OP_REQUIRES(context, (gradients_row == batch_size),
                 errors::InvalidArgument("gradients row is not same as batch_size)"));
 
-    // Grad indices value
-    const Tensor& indices_tensor = context->input(3);
-    Tindices *indices_ptr = (Tindices *)indices_tensor.tensor_data().data();
-    int indices_row = indices_tensor.dim_size(0);
-    int indices_col = indices_tensor.dim_size(1);
-    OP_REQUIRES(context, (indices_tensor.dims() == 2),
-                errors::InvalidArgument("Indice tensor is not as expected (dims != 2)"));
-    OP_REQUIRES(context, (indices_tensor.dim_size(0) == input_size),
-                errors::InvalidArgument("Indice tensor is not as expected (dim_size(0) != batch_size)"));
-    std::vector<Tinput> indices;
-    for (int64 i = 0; i < indices_row; ++i) {
-      indices.emplace_back(indices_ptr[i*indices_col]);
-    }
-
     // Grad combiner
-    bool is_mean = (combiner == 1);
+    // bool is_mean = (combiner == 1);
 
     // compute unique value and indices of input hash value
     std::vector<Tinput> unique_value;
@@ -407,16 +523,16 @@ public:
     //   printf("%d ", unique_indices[i]);
     // printf("\n");
 
-    // printf("indices: ");
-    // for (int i = 0; i < indices.size(); ++i)
-    //   printf("%d ", indices[i]);
+    // printf("input_indices: ");
+    // for (int i = 0; i < input_indices.size(); ++i)
+    //   printf("%d ", input_indices[i]);
     // printf("\n");
 
     // Create an output tensor
     Tensor* output_tensor = NULL;
     TensorShape output_shape({unique_value.size(), embedding_col});
     OP_REQUIRES_OK(context, context->allocate_output(0, output_shape, &output_tensor));
-    Tgradients *output = (Tgradients *)output_tensor->tensor_data().data();
+    T *output = (T *)output_tensor->tensor_data().data();
 
     Tensor* unique_tensor = NULL;
     TensorShape unique_shape({unique_value.size()});
@@ -432,33 +548,46 @@ public:
     // } else { // input id is sparse
     // }
 
-    uint64 rows = unique_indices.size();
-    std::vector<int64> row_values(unique_value.size(), 0);
-    for (int64 i = 0; i < rows; ++i) {
-      if (row_values[unique_indices[i]] > 0) {
-        add(&output[unique_indices[i]*embedding_col], &gradients[indices[i]*embedding_col], embedding_col);
-      } else {
-        copy(&output[unique_indices[i]*embedding_col], &gradients[indices[i]*embedding_col], embedding_col);
+    if (operation_ == SparseSegmentReductionOperation::kMean) {
+      auto input_flat = gradients_tensor.flat_outer_dims<T>();
+      typename TTypes<Tinput>::ConstVec indices_vec(unique_indices.data(), unique_indices.size());
+      typename TTypes<Tindices>::ConstVec segment_vec(input_indices.data(), input_indices.size());
+      auto output_flat = output_tensor->flat_outer_dims<T>();
+      functor::SparseSegmentGradFunctor<T, Tinput, Tindices>()(
+          context, operation_, input_flat, indices_vec, segment_vec, output_flat);
+    }
+    else if (operation_ == SparseSegmentReductionOperation::kSum) {
+      uint64 rows = unique_indices.size();
+      std::vector<int64> row_values(unique_value.size(), 0);
+      for (int64 i = 0; i < rows; ++i) {
+        if (row_values[unique_indices[i]] > 0) {
+          add(&output[unique_indices[i]*embedding_col], &gradients[input_indices[i]*embedding_col], embedding_col);
+        } else {
+          copy(&output[unique_indices[i]*embedding_col], &gradients[input_indices[i]*embedding_col], embedding_col);
+        }
+        row_values[unique_indices[i]] += 1;
       }
-      row_values[unique_indices[i]] += 1;
+    }
+    else if (operation_ == SparseSegmentReductionOperation::kSqrtN) {
+
     }
   }
 
 private:
-  template <typename T>
-  void copy(T* dst, const T* src, const int64 num) {
+  template <typename Tdata>
+  void copy(Tdata* dst, const Tdata* src, const int64 num) {
     memcpy(dst, src, num * sizeof(T));
   }
 
-  template <typename T>
-  void add(T* dst, const T* src, const int64 num) {
+  template <typename Tdata>
+  void add(Tdata* dst, const Tdata* src, const int64 num) {
     for (int64 i = 0; i < num; ++i) {
       dst[i] += src[i];
     }
   }
 
-  template <typename T>
-  void scale(T* dst, const T factor, const int64 num) {
+  template <typename Tdata>
+  void scale(Tdata* dst, const Tdata factor, const int64 num) {
     for (int64 i = 0; i < num; ++i) {
       dst[i] *= factor;
     }
@@ -467,20 +596,25 @@ private:
 private:
   int combiner = 0;   // 0=SUM, 1=MEAN
   std::string node_name;
+  SparseSegmentReductionOperation operation_;
 };
 
 REGISTER_KERNEL_BUILDER(                            \
     Name("FusedSafeEmbeddingLookupSparseGrad")      \
     .Device(DEVICE_CPU)                             \
+    .TypeConstraint<float>("T")                     \
+    .TypeConstraint<int64>("Tinput")                \
     .TypeConstraint<int32>("Tindices")              \
     .TypeConstraint<int64>("Tdense_shape"),         \
-    FusedSafeEmbeddingLookupSparseGradOp<CPUDevice, int32, int64>);
+    FusedSafeEmbeddingLookupSparseGradOp<CPUDevice, float, int64, int32, int64>);
 
 REGISTER_KERNEL_BUILDER(                            \
     Name("FusedSafeEmbeddingLookupSparseGrad")      \
     .Device(DEVICE_CPU)                             \
+    .TypeConstraint<float>("T")                     \
+    .TypeConstraint<int64>("Tinput")                \
     .TypeConstraint<int64>("Tindices")              \
     .TypeConstraint<int64>("Tdense_shape"),         \
-    FusedSafeEmbeddingLookupSparseGradOp<CPUDevice, int64, int64>);
+    FusedSafeEmbeddingLookupSparseGradOp<CPUDevice, float, int64, int64, int64>);
 
 }  // namespace tensorflow
