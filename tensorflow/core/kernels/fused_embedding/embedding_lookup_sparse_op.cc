@@ -417,23 +417,18 @@ class FusedSafeEmbeddingLookupSparseGradOp : public OpKernel {
 public:
   explicit FusedSafeEmbeddingLookupSparseGradOp(OpKernelConstruction* context)
            : OpKernel(context) {
-    OP_REQUIRES_OK(context, context->GetAttr("Combiner", &combiner));
+    OP_REQUIRES_OK(context, context->GetAttr("combiner", &combiner_));
     //OP_REQUIRES_OK(context, context->GetAttr("Dims", &dims));
 
-    switch (combiner) {
-      case 0: {
-        operation_ = SparseSegmentReductionOperation::kSum;
-        break;
-      }
-      case 1: {
-        operation_ = SparseSegmentReductionOperation::kMean;
-        break;
-      }
-      case 2: {
-        operation_ = SparseSegmentReductionOperation::kSqrtN;
-        break;
-      }
-        // No default to get compiler warnings for missing cases.
+    if (combiner_ == "sum") {
+      operation_ = SparseSegmentReductionOperation::kSum;
+    } else if (combiner_ == "mean") {
+      operation_ = SparseSegmentReductionOperation::kMean;
+    } else if (combiner_ == "sqrtn") {
+      operation_ = SparseSegmentReductionOperation::kSqrtN;
+    } else {
+      OP_REQUIRES(context, false,
+          errors::InvalidArgument("Currently, 'mean', 'sqrtn' and 'sum' are only supported"));
     }
 
     node_name = context->def().name();
@@ -594,7 +589,7 @@ private:
   }
 
 private:
-  int combiner = 0;   // 0=SUM, 1=MEAN
+  std::string combiner_;
   std::string node_name;
   SparseSegmentReductionOperation operation_;
 };

@@ -454,7 +454,7 @@ TEST_F(FusedEmbeddingLocalSparseLookUpOpTest, GradFloatSumCpu) {
                     .Attr("Tinput", DT_INT64)
                     .Attr("Tindices", DT_INT64)
                     .Attr("Tdense_shape", DT_INT64)
-                    .Attr("Combiner", 0)
+                    .Attr("combiner", "sum")
                     .Finalize(node_def()));
   TF_EXPECT_OK(InitOp());
 
@@ -529,7 +529,7 @@ TEST_F(FusedEmbeddingLocalSparseLookUpOpTest, GradFloatMeanCpu) {
                     .Attr("Tinput", DT_INT64)
                     .Attr("Tindices", DT_INT64)
                     .Attr("Tdense_shape", DT_INT64)
-                    .Attr("Combiner", 1)
+                    .Attr("combiner", "mean")
                     .Finalize(node_def()));
   TF_EXPECT_OK(InitOp());
 

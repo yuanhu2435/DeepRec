@@ -102,5 +102,5 @@ def fused_embedding_sparse_post_look_up_grad(op, top_grad_emb_vec, _):
 
 @ops.RegisterGradient("FusedSafeEmbeddingLookupSparse")
 def _embedding_grad(op, grad):
-    grad, unique_value = fused_safe_embedding_lookup_sparse_grad(gradients=grad, input=op.inputs[1], dense_shape=op.inputs[2], indices=op.inputs[3])
+    grad, unique_value = fused_safe_embedding_lookup_sparse_grad(gradients=grad, input=op.inputs[1], dense_shape=op.inputs[2], indices=op.inputs[3], combiner=op.get_attr("combiner"))
     return [ops.IndexedSlices(grad, unique_value, op.inputs[2]), None, None, None, None]

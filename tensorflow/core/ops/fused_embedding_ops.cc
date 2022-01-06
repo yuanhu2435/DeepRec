@@ -245,7 +245,7 @@ REGISTER_OP("FusedSafeEmbeddingLookupSparse")
     .Input("id_input: T_id")
     .Input("dense_shape: T_shape")
     .Input("indice: T_shape")
-    // .Input("weight_input: T_id")
+    .Input("weight_input: T_id")
     .Output("embedded: T")
     .Attr("combiner: {'sqrtn', 'mean', 'sum'} = 'mean'")
     .Attr("prune: bool = true")
@@ -284,7 +284,7 @@ REGISTER_OP("FusedSafeEmbeddingLookupSparseGrad")
     .Attr("Tinput: {int64}")
     .Attr("Tindices: {int64, int32}")
     .Attr("Tdense_shape: {int64, int32}")
-    .Attr("Combiner: int = 1")
+    .Attr("combiner: {'sqrtn', 'mean', 'sum'} = 'mean'")
     .SetShapeFn([](InferenceContext* ctx) {
       ShapeHandle emb_var_shape;
       TF_RETURN_IF_ERROR(ctx->WithRank(ctx->input(0), 2, &emb_var_shape));
