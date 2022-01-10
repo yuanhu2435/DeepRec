@@ -110,7 +110,7 @@ namespace {
 
     static void myadd(float *dst, float *src, int float_num) {
       for (int i = 0; i < float_num; ++i) {
-          dst[i] += src[i];
+        dst[i] += src[i];
       }
     }
 
@@ -129,23 +129,76 @@ namespace {
     int *row_values = new int[rows];
     memset(row_values, 0, rows * sizeof(int));
 
-    for (int64 i = 0; i < input_size; ++i) {
-        Tid id = input[i];
-        if (id < 0) { // Skip invalid id
-        continue;
+#define NUM(n)                                  \
+  embedding_table[input[index + n] * embedding_size + j]
+
+    for (int64 i = 0, index_j = 0; i <= input_size; ++i) {
+        Tid id = input[i < input_size ? i : 0];
+        if (i < input_size && input[i] < 0) { // Skip invalid id
+          continue;
         }
-        auto row = indice[i * indice_dim];
-        for (int k = 1; k < indice_dim - 1; ++k) {
-        row = row * shape[k] + indice[i * indice_dim + k];
+        auto row = i < input_size ? indice[i * indice_dim] : -1;
+        auto pre_row = indice[index_j * indice_dim];
+
+        // for (int k = 1; k < indice_dim - 1; ++k) {
+        //   row = row * shape[k] + indice[i * indice_dim + k];
+        // }
+
+        if (i < input_size){
+          row_values[row] += 1;
         }
-        if (row_values[row] > 0) {
-        myadd(&output[row * embedding_size], 
-                &embedding_table[id * embedding_size], embedding_size);
-        } else {
-        mycopy(&output[row * embedding_size],
-                &embedding_table[id * embedding_size], embedding_size);
+
+        if (pre_row != row){
+          float *dst = &output[pre_row * embedding_size];
+          int64 r = (i - index_j) % 8;
+          int64 index = index_j;
+          for (int j = 0; j < embedding_size; ++j){
+            index = index_j;
+            float sum_tmp = 0.0;
+            switch (r) {
+              case 1: {
+                dst[j] += NUM(0);
+                break;
+              }
+              case 2: {
+                sum_tmp = NUM(0) + NUM(1);
+                dst[j] += sum_tmp;
+                break;
+              }
+              case 3: {
+                sum_tmp = NUM(0) + NUM(1) + NUM(2);
+                dst[j] += sum_tmp;
+                break;
+              }
+              case 4: {
+                sum_tmp = NUM(0) + NUM(1) + NUM(2) + NUM(3);
+                dst[j] += sum_tmp;
+                break;
+              }
+              case 5: {
+                sum_tmp = NUM(0) + NUM(1) + NUM(2) + NUM(3) + NUM(4);
+                dst[j] += sum_tmp;
+                break;
+              }
+              case 6: {
+                sum_tmp = NUM(0) + NUM(1) + NUM(2) + NUM(3) + NUM(4) + NUM(5);
+                dst[j] += sum_tmp;
+                break;
+              }
+              case 7: {
+                sum_tmp = NUM(0) + NUM(1) + NUM(2) + NUM(3) + NUM(4) + NUM(5) + NUM(6);
+                dst[j] += sum_tmp;
+                break;
+              }
+            }
+            for (index += r; index < i; index += 8) {
+              sum_tmp = NUM(0) + NUM(1) + NUM(2) + NUM(3) + NUM(4) + NUM(5) + NUM(6) + NUM(7);
+              dst[j] += sum_tmp;
+            }
+          }
+          printf("hello \n");
+          index_j = i;
         }
-        row_values[row] += 1;
     }
 
     for (int i = 0; i < rows; ++i) {
