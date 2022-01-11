@@ -46,17 +46,9 @@ def _initialized_session(graph=None, config=None):
   return sess
 
 def print_ops(sess, op_name):
-  print("\n### name:", op_name)
   out = sess.graph.get_operation_by_name(op_name)
-  print(">" * 64)
-  for _input in out.inputs:
-    print(_input)
-    print(sess.run(_input))
-  print("-" * 64)
-  for _output in out.outputs:
-    print(_output)
-    print(sess.run(_output))
-  print("<" * 64, "\n")
+  # return [_input for _input in out.inputs] + [_output for _output in out.outputs]
+  return [_input for _input in out.inputs]
 
 
 class EmbeddingColumnTest(test.TestCase):
@@ -84,34 +76,35 @@ class EmbeddingColumnTest(test.TestCase):
     with ops.name_scope("optimizer"):
       train_op = adagrad.AdagradOptimizer(learning_rate=0.01, initial_accumulator_value=0.1).minimize(loss_op)
 
-    return train_op
+    return train_op, loss_op
 
   def _base_model(self, do_fusion=False, check_tensor=[]):
     with ops.Graph().as_default() as graph:
         random_seed.set_random_seed(2021)
 
-        train_op = self._get_model(do_fusion=do_fusion)
+        train_op, loss_op = self._get_model(do_fusion=do_fusion)
         with _initialized_session(graph=graph) as sess:
-            # print(">" * 64, "\n")
-            # print(sess.run(train_op))
-            # print("<" * 64, "\n")
+            _check_list = []
 
             common_tensor = [
                 # "gradients/input_layer/colors_embedding/Reshape_grad/Reshape",
                 # "input_layer/colors_embedding/embedding_weights/read",
                 # "embedding/input_layer/concat/concat",
-                # "embedding/input_layer/colors_embedding/Reshape",
+                "embedding/input_layer/colors_embedding/Reshape",
                 # "embedding/input_layer/colors_embedding/lookup",
                 # "optimizer/Adagrad/update_input_layer/colors_embedding/embedding_weights/UnsortedSegmentSum",
-                "optimizer/Adagrad/update_input_layer/colors_embedding/embedding_weights/SparseApplyAdagrad",
+                # "optimizer/Adagrad/update_input_layer/colors_embedding/embedding_weights/SparseApplyAdagrad",
             ]
             for _op_name in common_tensor:
-                print_ops(sess, _op_name)
+                _check_list.append(print_ops(sess, _op_name))
                 
             for _op_name in check_tensor:
-                print_ops(sess, _op_name)
+                _check_list.append(print_ops(sess, _op_name))
 
-            sess.run(train_op)
+            for i in range(10):
+              # print(sess.run([*_check_list]))
+              print(sess.run([train_op, loss_op]))
+              # print(sess.run([*_check_list]))
     pass
 
   @test_util.run_deprecated_v1
