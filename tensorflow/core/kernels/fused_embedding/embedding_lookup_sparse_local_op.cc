@@ -19,27 +19,27 @@ namespace {
     static void sparse_gather_v1(T *input, int rows, int cols, 
                                 float *embedding_table, float *output,
                                 int embedding_size, bool is_mean) {
-      T *pidx = input;
-      for (int i = 0; i < rows; ++i) {
+    T *pidx = input;
+    for (int i = 0; i < rows; ++i) {
         for (int j = 0; j < embedding_size; ++j) {
-          float value = 0;
-          int dense_num = 0;
-          for (int k = 0; k < cols; ++k) {
+        float value = 0;
+        int dense_num = 0;
+        for (int k = 0; k < cols; ++k) {
             int embedding_row = (int)pidx[k];
             if (embedding_row >= 0) {
-              value += embedding_table[embedding_row * embedding_size + j];
-              dense_num += 1;
+            value += embedding_table[embedding_row * embedding_size + j];
+            dense_num += 1;
             }
-          }
+        }
 
-          if (is_mean && dense_num > 0) {
-              *output++ = value / dense_num;
-          } else {
-              *output++ = value;
-          }
+        if (is_mean && dense_num > 0) {
+            *output++ = value / dense_num;
+        } else {
+            *output++ = value;
+        }
         }
         pidx += cols;
-      }
+    }
     }
 
     // embedding_size = 1
@@ -49,21 +49,21 @@ namespace {
                                             bool is_mean) {
     T *pidx = input;
     for (int i = 0; i < rows; ++i) {
-      float value = 0;
-      int dense_num = 0;
-      for (int k = 0; k < cols; ++k) {
+        float value = 0;
+        int dense_num = 0;
+        for (int k = 0; k < cols; ++k) {
         int embedding_row = pidx[k];
         if (embedding_row >= 0) {
             value += embedding_table[embedding_row];
             dense_num += 1;
         }
-      }
-      if (is_mean && dense_num > 0) {
+        }
+        if (is_mean && dense_num > 0) {
         *output++ = value / dense_num;
-      } else {
+        } else {
         *output++ = value;
-      }
-      pidx += cols;
+        }
+        pidx += cols;
     }
     }
 
@@ -91,16 +91,16 @@ namespace {
     template<typename T>
     static void sparse_gather(T *input, int rows, int cols, float *embedding_table,
                             float *output, int embedding_size, bool is_mean) {
-      if (embedding_size == 1) {
+    if (embedding_size == 1) {
         sparse_gather_embeddingsize1(input, rows, cols, embedding_table, output,
-                                      is_mean);
-      } else if (cols == 1) {
+                                    is_mean);
+    } else if (cols == 1) {
         sparse_gather_column1(input, rows, embedding_table, output, embedding_size);
-      } else {
+    } else {
         //printf("General sparse gather!\n");
         sparse_gather_v1(input, rows, cols, embedding_table, output, embedding_size, 
                         is_mean);
-      }
+    }
     }
 
     // Use memcpy or manually assign?
@@ -111,67 +111,6 @@ namespace {
     static void myadd(float *dst, float *src, int float_num) {
       for (int i = 0; i < float_num; ++i) {
         dst[i] += src[i];
-      }
-    }
-
-    template<typename T>
-    static void row_add(std::map<T *, std::vector<T *>> &mapSet, int64 row_nums) {
-
-#define L(n) srcs[index + n][row]
-
-      for (auto it = mapSet.begin(); it != mapSet.end(); ++it){
-        T * dst = it->first;
-        memset(dst, 0, row_nums * sizeof(T));
-        std::vector<T *> srcs(std::move(it->second));
-        int64 src_size = srcs.size();
-        float sum_tmp = 0.0;
-        int64 index = 0;
-        int64 r = (src_size) % 8;
-
-        for (int row = 0; row < row_nums; ++row){
-          sum_tmp = 0.0;
-          index = 0;
-          switch (r) {
-            case 1: {
-              dst[row] = L(0);
-              break;
-            }
-            case 2: {
-              sum_tmp = L(0) + L(1);
-              dst[row] = sum_tmp;
-              break;
-            }
-            case 3: {
-              sum_tmp = L(0) + L(1) + L(2);
-              dst[row] = sum_tmp;
-              break;
-            }
-            case 4: {
-              sum_tmp = L(0) + L(1) + L(2) + L(3);
-              dst[row] = sum_tmp;
-              break;
-            }
-            case 5: {
-              sum_tmp = L(0) + L(1) + L(2) + L(3) + L(4);
-              dst[row] = sum_tmp;
-              break;
-            }
-            case 6: {
-              sum_tmp = L(0) + L(1) + L(2) + L(3) + L(4) + L(5);
-              dst[row] = sum_tmp;
-              break;
-            }
-            case 7: {
-              sum_tmp = L(0) + L(1) + L(2) + L(3) + L(4) + L(5) + L(6);
-              dst[row] = sum_tmp;
-              break;
-            }
-          }
-          for (index += r; index < src_size; index += 8) {
-            sum_tmp = L(0) + L(1) + L(2) + L(3) + L(4) + L(5) + L(6) + L(7);
-            dst[row] += sum_tmp;
-          }
-        }
       }
     }
 
@@ -186,42 +125,92 @@ namespace {
                             int indice_dim, Tshape *shape, int rows, int cols,
                             float *embedding_table, float *output,
                             int embedding_size, bool is_mean) {
-      // Record how many values in each row
-      int *row_values = new int[rows];
-      memset(row_values, 0, rows * sizeof(int));
+    // Record how many values in each row
+    int *row_values = new int[rows];
+    memset(row_values, 0, rows * sizeof(int));
 
-      std::map<float *, std::vector<float *>> mapSet;
+#define NUM(n)                                  \
+  embedding_table[input[index + n] * embedding_size + j]
 
-      for (int64 i = 0; i < input_size; ++i) {
-        Tid id = input[i];
+    for (int64 i = 0, index_j = 0; i <= input_size; ++i) {
+        Tid id = input[i < input_size ? i : 0];
         if (i < input_size && input[i] < 0) { // Skip invalid id
           continue;
         }
-        auto row = indice[i * indice_dim];
+        auto row = i < input_size ? indice[i * indice_dim] : -1;
+        auto pre_row = indice[index_j * indice_dim];
+
         // for (int k = 1; k < indice_dim - 1; ++k) {
         //   row = row * shape[k] + indice[i * indice_dim + k];
         // }
-        row_values[row] += 1;
 
-        auto index = row * embedding_size;
-        if (!mapSet.count(&output[index])){
-          std::vector<float *> srcs;
-          mapSet[&output[index]] = srcs;
+        if (i < input_size){
+          row_values[row] += 1;
         }
-        mapSet[&output[index]].push_back(&embedding_table[id * embedding_size]);
-      }
 
-      row_add(mapSet, embedding_size);
+        if (pre_row != row){
+          float *dst = &output[pre_row * embedding_size];
+          int64 r = (i - index_j) % 8;
+          int64 index = index_j;
+          for (int j = 0; j < embedding_size; ++j){
+            index = index_j;
+            float sum_tmp = 0.0;
+            switch (r) {
+              case 1: {
+                dst[j] += NUM(0);
+                break;
+              }
+              case 2: {
+                sum_tmp = NUM(0) + NUM(1);
+                dst[j] += sum_tmp;
+                break;
+              }
+              case 3: {
+                sum_tmp = NUM(0) + NUM(1) + NUM(2);
+                dst[j] += sum_tmp;
+                break;
+              }
+              case 4: {
+                sum_tmp = NUM(0) + NUM(1) + NUM(2) + NUM(3);
+                dst[j] += sum_tmp;
+                break;
+              }
+              case 5: {
+                sum_tmp = NUM(0) + NUM(1) + NUM(2) + NUM(3) + NUM(4);
+                dst[j] += sum_tmp;
+                break;
+              }
+              case 6: {
+                sum_tmp = NUM(0) + NUM(1) + NUM(2) + NUM(3) + NUM(4) + NUM(5);
+                dst[j] += sum_tmp;
+                break;
+              }
+              case 7: {
+                sum_tmp = NUM(0) + NUM(1) + NUM(2) + NUM(3) + NUM(4) + NUM(5) + NUM(6);
+                dst[j] += sum_tmp;
+                break;
+              }
+            }
+            for (index += r; index < i; index += 8) {
+              sum_tmp = NUM(0) + NUM(1) + NUM(2) + NUM(3) + NUM(4) + NUM(5) + NUM(6) + NUM(7);
+              dst[j] += sum_tmp;
+            }
+          }
+          printf("hello \n");
+          index_j = i;
+        }
+    }
 
-      for (int i = 0; i < rows; ++i) {
+    for (int i = 0; i < rows; ++i) {
         if (row_values[i] == 0) {
-          memset(&output[i * embedding_size], 0, embedding_size * sizeof(float));
+        memset(&output[i * embedding_size], 0, embedding_size * sizeof(float));
         } else if (is_mean && row_values[i] > 1) {
-          float factor = 1.0f / row_values[i];
-          myscale(&output[i * embedding_size], factor, embedding_size);
+        float factor = 1.0f / row_values[i];
+        myscale(&output[i * embedding_size], factor, embedding_size);
         }
-      }
-      delete[] row_values;
+    }
+
+    delete[] row_values;
     }
 }
 
@@ -288,8 +277,23 @@ public:
 
   void Compute(OpKernelContext* context) override {
     // Grab the weight
+    float *weight;
     const Tensor* weight_tensor = &context->input(0);
-    float *weight = (float *)weight_tensor->tensor_data().data();
+
+    // for saved model
+    if (weight_tensor->dtype() == DT_RESOURCE) {
+      Var* variable;
+      OP_REQUIRES_OK(context,
+                     LookupResource(context, HandleFromInput(context, 0), 
+                                    &variable));
+      core::ScopedUnref s(variable);
+      weight_tensor = variable->tensor();
+      OP_REQUIRES(context, weight_tensor->dtype() == DT_FLOAT,
+                  errors::InvalidArgument("Expect float weight in ",
+                                          node_name));
+    }
+
+    weight = (float *)weight_tensor->tensor_data().data();
     
     // Input id
     const Tensor& input_tensor = context->input(1);
@@ -329,8 +333,7 @@ public:
                                                      &output_tensor));
     float *output = (float *)output_tensor->tensor_data().data();
 
-    if (false && input_size == batch_size * cols) { // input id is dense
-      //fixme(marvin): disable this branch just for test.
+    if (input_size == batch_size * cols) { // input id is dense
       sparse_gather(input, batch_size, cols, weight, output, embedding_size, is_mean);
     } else { // input id is sparse
       OP_REQUIRES(context, (indice_tensor.dims() == 2),
@@ -348,14 +351,14 @@ private:
 };
 
 REGISTER_KERNEL_BUILDER(                                        \
-    Name("FusedSafeEmbeddingLookupSparse")                      \
+    Name("FusedSafeEmbeddingLookupSparseLocal")                 \
     .Device(DEVICE_CPU)                                         \
     .TypeConstraint<int32>("T_id")                               \
     .TypeConstraint<int64>("T_shape"),                           \
     FusedSafeEmbeddingLookupSparseOp<CPUDevice, int32, int64>);
 
 REGISTER_KERNEL_BUILDER(                                        \
-    Name("FusedSafeEmbeddingLookupSparse")                      \
+    Name("FusedSafeEmbeddingLookupSparseLocal")                 \
     .Device(DEVICE_CPU)                                         \
     .TypeConstraint<int64>("T_id")                               \
     .TypeConstraint<int64>("T_shape"),                           \
@@ -483,11 +486,11 @@ public:
 
     node_name = context->def().name();
 
-    // static bool printed = false;
-    // if (!printed) {
-    //   printf("******** FusedSafeEmbeddingLookupSparseGradOp ********\n");
-    //   printed = true;
-    // }
+    static bool printed = false;
+    if (!printed) {
+      printf("******** FusedSafeEmbeddingLookupSparseGradOp ********\n");
+      printed = true;
+    }
   }
 
   ~FusedSafeEmbeddingLookupSparseGradOp() {
@@ -503,16 +506,15 @@ public:
     int64 embedding_col = gradients_tensor.dim_size(1);
 
     // Grad input hash value
-    const Tensor& unique_id_tensor = context->input(1);
-    Tinput *unique_id = (Tinput *)unique_id_tensor.tensor_data().data();
-    int unique_id_size = unique_id_tensor.dim_size(0);
-
-    const Tensor& unique_indices_tensor = context->input(2);
-    Tinput *unique_indices = (Tinput *)unique_indices_tensor.tensor_data().data();
-    int unique_indices_size = unique_indices_tensor.dim_size(0);
+    const Tensor& input_tensor = context->input(1);
+    Tinput *input = (Tinput *)input_tensor.tensor_data().data();
+    int64 input_size = 1;
+    for (int i = 0; i < input_tensor.dims(); ++i) {
+      input_size *= input_tensor.dim_size(i);
+    }
 
     // Grad indices value
-    const Tensor& indices_tensor = context->input(3);
+    const Tensor& indices_tensor = context->input(2);
     Tindices *indices_ptr = (Tindices *)indices_tensor.tensor_data().data();
     int indices_row = indices_tensor.dim_size(0);
     int indices_col = indices_tensor.dim_size(1);
@@ -526,7 +528,7 @@ public:
     }
 
     // Grad input dense shape
-    const Tensor& dense_shape_tensor = context->input(4);
+    const Tensor& dense_shape_tensor = context->input(3);
     Tdense_shape *dense_shape = (Tdense_shape *)dense_shape_tensor.tensor_data().data();
     OP_REQUIRES(context, (dense_shape_tensor.dims() == 1),
                 errors::InvalidArgument("Shape tensor is not valid (dims != 1)"));
@@ -541,6 +543,29 @@ public:
     OP_REQUIRES(context, (gradients_row == batch_size),
                 errors::InvalidArgument("gradients row is not same as batch_size)"));
 
+    // Grad combiner
+    // bool is_mean = (combiner == 1);
+
+    // compute unique value and indices of input hash value
+    std::vector<Tinput> unique_value;
+    std::vector<Tinput> unique_indices;
+    unique_value.reserve(input_size);
+    unique_indices.reserve(input_size);
+    for (int64 i = 0; i < input_size; ++i) {
+        Tinput id = input[i];
+        if (id < 0) { // Skip invalid id
+          continue;
+        }
+        auto it = std::find(unique_value.begin(), unique_value.end(), id);
+        if (it == unique_value.end()) { // no find
+          unique_indices.push_back(unique_value.size());
+          unique_value.push_back(id);
+        }
+        else {
+          unique_indices.push_back(it - unique_value.begin());
+        }
+    }
+
     // printf("unique_indices: ");
     // for (int i = 0; i < unique_indices.size(); ++i)
     //   printf("%d ", unique_indices[i]);
@@ -553,18 +578,18 @@ public:
 
     // Create an output tensor
     Tensor* output_tensor = NULL;
-    TensorShape output_shape({unique_id_size, embedding_col});
+    TensorShape output_shape({unique_value.size(), embedding_col});
     OP_REQUIRES_OK(context, context->allocate_output(0, output_shape, &output_tensor));
     T *output = (T *)output_tensor->tensor_data().data();
 
     Tensor* unique_tensor = NULL;
-    TensorShape unique_shape({unique_id_size});
+    TensorShape unique_shape({unique_value.size()});
     OP_REQUIRES_OK(context, context->allocate_output(1, unique_shape, &unique_tensor));
     Tinput *unique = (Tinput *)unique_tensor->tensor_data().data();
 
-    int64 unique_num = unique_id_size;
+    int64 unique_num = unique_value.size();
     for (int64 i = 0; i < unique_num; ++i) {
-      unique[i] = unique_id[i];
+      unique[i] = unique_value[i];
     }
 
     // if (input_size == batch_size * input_cols) { // input id is dense
@@ -573,31 +598,24 @@ public:
 
     if (operation_ == SparseSegmentReductionOperation::kMean) {
       auto input_flat = gradients_tensor.flat_outer_dims<T>();
-      typename TTypes<Tinput>::ConstVec indices_vec(unique_indices, unique_indices_size);
+      typename TTypes<Tinput>::ConstVec indices_vec(unique_indices.data(), unique_indices.size());
       typename TTypes<Tindices>::ConstVec segment_vec(input_indices.data(), input_indices.size());
       auto output_flat = output_tensor->flat_outer_dims<T>();
       functor::SparseSegmentGradFunctor<T, Tinput, Tindices>()(
           context, operation_, input_flat, indices_vec, segment_vec, output_flat);
     }
     else if (operation_ == SparseSegmentReductionOperation::kSum) {
-      uint64 rows = unique_indices_size;
-      std::vector<int64> row_values(unique_id_size, 0);
-      std::map<float *, std::vector<float *>> mapSet;
+      uint64 rows = unique_indices.size();
+      std::vector<int64> row_values(unique_value.size(), 0);
       for (int64 i = 0; i < rows; ++i) {
-        row_values[unique_indices[i]] += 1;
-
-        auto index = unique_indices[i] * embedding_col;
-
-        if (!mapSet.count(&output[index])){
-          std::vector<float *> srcs;
-          mapSet[&output[index]] = srcs;
+        if (row_values[unique_indices[i]] > 0) {
+          add(&output[unique_indices[i]*embedding_col], &gradients[input_indices[i]*embedding_col], embedding_col);
+        } else {
+          copy(&output[unique_indices[i]*embedding_col], &gradients[input_indices[i]*embedding_col], embedding_col);
         }
-        mapSet[&output[index]].push_back(&gradients[input_indices[i] * embedding_col]);
-
+        row_values[unique_indices[i]] += 1;
       }
-      row_add(mapSet, embedding_col);
     }
-
     else if (operation_ == SparseSegmentReductionOperation::kSqrtN) {
 
     }
@@ -630,7 +648,7 @@ private:
 };
 
 REGISTER_KERNEL_BUILDER(                            \
-    Name("FusedSafeEmbeddingLookupSparseGrad")      \
+    Name("FusedSafeEmbeddingLookupSparseGradLocal")      \
     .Device(DEVICE_CPU)                             \
     .TypeConstraint<float>("T")                     \
     .TypeConstraint<int64>("Tinput")                \
@@ -639,7 +657,7 @@ REGISTER_KERNEL_BUILDER(                            \
     FusedSafeEmbeddingLookupSparseGradOp<CPUDevice, float, int64, int32, int64>);
 
 REGISTER_KERNEL_BUILDER(                            \
-    Name("FusedSafeEmbeddingLookupSparseGrad")      \
+    Name("FusedSafeEmbeddingLookupSparseGradLocal")      \
     .Device(DEVICE_CPU)                             \
     .TypeConstraint<float>("T")                     \
     .TypeConstraint<int64>("Tinput")                \
