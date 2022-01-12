@@ -518,7 +518,7 @@ public:
     int indices_col = indices_tensor.dim_size(1);
     OP_REQUIRES(context, (indices_tensor.dims() == 2),
                 errors::InvalidArgument("Indice tensor is not as expected (dims != 2)"));
-    OP_REQUIRES(context, (indices_tensor.dim_size(0) == input_size),
+    OP_REQUIRES(context, (indices_tensor.dim_size(0) == unique_indices_size),
                 errors::InvalidArgument("Indice tensor is not as expected (dim_size(0) != batch_size)"));
     std::vector<Tindices> input_indices; // collect first col
     for (int64 i = 0; i < indices_row; ++i) {
