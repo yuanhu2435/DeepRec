@@ -153,6 +153,7 @@ namespace {
           int64 r = (i - index_j) % 8;
           int64 index = index_j;
           for (int j = 0; j < embedding_size; ++j){
+            dst[j] = 0.0;
             index = index_j;
             float sum_tmp = 0.0;
             switch (r) {
@@ -195,8 +196,8 @@ namespace {
               sum_tmp = NUM(0) + NUM(1) + NUM(2) + NUM(3) + NUM(4) + NUM(5) + NUM(6) + NUM(7);
               dst[j] += sum_tmp;
             }
+            // printf("hello %d: %f\n", j, dst[j]);
           }
-          printf("hello \n");
           index_j = i;
         }
     }
@@ -264,16 +265,16 @@ namespace {
 */
 
 template <typename Device, typename Tid, typename Tshape>
-class FusedSafeEmbeddingLookupSparseOp : public OpKernel {
+class FusedSafeEmbeddingLookupSparseLocalOp : public OpKernel {
 public:
-  explicit FusedSafeEmbeddingLookupSparseOp(OpKernelConstruction* context)
+  explicit FusedSafeEmbeddingLookupSparseLocalOp(OpKernelConstruction* context)
            : OpKernel(context) {
     OP_REQUIRES_OK(context, context->GetAttr("combiner", &combiner_));
     //OP_REQUIRES_OK(context, context->GetAttr("Dims", &dims));
     node_name = context->def().name();
   }
 
-  ~FusedSafeEmbeddingLookupSparseOp() {}
+  ~FusedSafeEmbeddingLookupSparseLocalOp() {}
 
   void Compute(OpKernelContext* context) override {
     // Grab the weight
@@ -355,14 +356,14 @@ REGISTER_KERNEL_BUILDER(                                        \
     .Device(DEVICE_CPU)                                         \
     .TypeConstraint<int32>("T_id")                               \
     .TypeConstraint<int64>("T_shape"),                           \
-    FusedSafeEmbeddingLookupSparseOp<CPUDevice, int32, int64>);
+    FusedSafeEmbeddingLookupSparseLocalOp<CPUDevice, int32, int64>);
 
 REGISTER_KERNEL_BUILDER(                                        \
     Name("FusedSafeEmbeddingLookupSparseLocal")                 \
     .Device(DEVICE_CPU)                                         \
     .TypeConstraint<int64>("T_id")                               \
     .TypeConstraint<int64>("T_shape"),                           \
-    FusedSafeEmbeddingLookupSparseOp<CPUDevice, int64, int64>);
+    FusedSafeEmbeddingLookupSparseLocalOp<CPUDevice, int64, int64>);
 
 
 enum class SparseSegmentReductionOperation { kSum, kMean, kSqrtN };
@@ -466,9 +467,9 @@ struct SparseSegmentGradFunctor {
 }  // namespace functor
 
 template <typename Device, typename T, typename Tinput, typename Tindices, typename Tdense_shape>
-class FusedSafeEmbeddingLookupSparseGradOp : public OpKernel {
+class FusedSafeEmbeddingLookupSparseLocalGradOp : public OpKernel {
 public:
-  explicit FusedSafeEmbeddingLookupSparseGradOp(OpKernelConstruction* context)
+  explicit FusedSafeEmbeddingLookupSparseLocalGradOp(OpKernelConstruction* context)
            : OpKernel(context) {
     OP_REQUIRES_OK(context, context->GetAttr("combiner", &combiner_));
     //OP_REQUIRES_OK(context, context->GetAttr("Dims", &dims));
@@ -488,12 +489,12 @@ public:
 
     static bool printed = false;
     if (!printed) {
-      printf("******** FusedSafeEmbeddingLookupSparseGradOp ********\n");
+      printf("******** FusedSafeEmbeddingLookupSparseLocalGradOp ********\n");
       printed = true;
     }
   }
 
-  ~FusedSafeEmbeddingLookupSparseGradOp() {
+  ~FusedSafeEmbeddingLookupSparseLocalGradOp() {
   }
 
   void Compute(OpKernelContext* context) override {
@@ -648,21 +649,21 @@ private:
 };
 
 REGISTER_KERNEL_BUILDER(                            \
-    Name("FusedSafeEmbeddingLookupSparseGradLocal")      \
+    Name("FusedSafeEmbeddingLookupSparseLocalGrad") \
     .Device(DEVICE_CPU)                             \
     .TypeConstraint<float>("T")                     \
     .TypeConstraint<int64>("Tinput")                \
     .TypeConstraint<int32>("Tindices")              \
     .TypeConstraint<int64>("Tdense_shape"),         \
-    FusedSafeEmbeddingLookupSparseGradOp<CPUDevice, float, int64, int32, int64>);
+    FusedSafeEmbeddingLookupSparseLocalGradOp<CPUDevice, float, int64, int32, int64>);
 
 REGISTER_KERNEL_BUILDER(                            \
-    Name("FusedSafeEmbeddingLookupSparseGradLocal")      \
+    Name("FusedSafeEmbeddingLookupSparseLocalGrad") \
     .Device(DEVICE_CPU)                             \
     .TypeConstraint<float>("T")                     \
     .TypeConstraint<int64>("Tinput")                \
     .TypeConstraint<int64>("Tindices")              \
     .TypeConstraint<int64>("Tdense_shape"),         \
-    FusedSafeEmbeddingLookupSparseGradOp<CPUDevice, float, int64, int64, int64>);
+    FusedSafeEmbeddingLookupSparseLocalGradOp<CPUDevice, float, int64, int64, int64>);
 
 }  // namespace tensorflow

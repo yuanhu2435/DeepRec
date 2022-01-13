@@ -5325,6 +5325,7 @@ tf_kernel_library(
     name = "fused_embedding_ops_cpu",
     srcs = [
         "fused_embedding/embedding_lookup_sparse_op.cc",
+        "fused_embedding/embedding_lookup_sparse_local_op.cc",
     ],
     hdrs = ["fused_embedding/embedding_lookup_sparse_op.h"],
     deps = MATH_DEPS + [
