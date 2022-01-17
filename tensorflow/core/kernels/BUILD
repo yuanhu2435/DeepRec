@@ -5321,10 +5321,32 @@ tf_cc_test(
     ],
 )
 
+tf_cc_test(
+    name = "embedding_lookup_sparse_pre_op_test",
+    size = "small",
+    srcs = ["fused_embedding/embedding_lookup_sparse_pre_op_test.cc"],
+    deps = [
+        ":fused_embedding_ops_cpu",
+        ":ops_testutil",
+        ":ops_util",
+        "//tensorflow/cc:cc_ops",
+        "//tensorflow/core:core_cpu",
+        "//tensorflow/core:framework",
+        "//tensorflow/core:framework_internal",
+        "//tensorflow/core:lib",
+        "//tensorflow/core:protos_all_cc",
+        "//tensorflow/core:tensorflow",
+        "//tensorflow/core:test",
+        "//tensorflow/core:test_main",
+        "//tensorflow/core:testlib",
+    ],
+)
+
 tf_kernel_library(
     name = "fused_embedding_ops_cpu",
     srcs = [
         "fused_embedding/embedding_lookup_sparse_op.cc",
+        "fused_embedding/embedding_lookup_sparse_pre_op.cc",
         "fused_embedding/embedding_lookup_sparse_local_op.cc",
     ],
     hdrs = ["fused_embedding/embedding_lookup_sparse_op.h"],

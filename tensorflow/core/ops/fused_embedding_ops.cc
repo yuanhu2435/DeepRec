@@ -273,6 +273,70 @@ REGISTER_OP("FusedSafeEmbeddingLookupSparseLocal")
       return Status::OK();
     });
 
+REGISTER_OP("FusedSafeEmbeddingPreLookup")
+    .Attr("num_partitions: int >= 1 = 1")
+    .Attr("partition_axis: int >= 0 = 0")  // for now only support = 0,
+                                           // will consider support = 1
+                                           // if necessary
+    .Attr("fill_empty_row: bool = false")
+    .Attr("prune_invalid_id: bool = false")
+    .Attr("default_id: int = -1")
+    .Attr("partition_strategy: {'div','mod'} = 'div'")
+    .Input("partition_shapes: num_partitions * int64")
+    .Input("sp_values: int64")
+    .Input("sp_indices: int64")
+    .Input("sp_dense_shape: int64")
+    .Output("partitioned_values: num_partitions * int64")
+    .Output("partitioned_indices: num_partitions * int64")
+    .Output("row_empty_and_invalid_flags: int32")
+    .SetShapeFn([](InferenceContext* ctx) {
+      int num_partitions;
+      TF_RETURN_IF_ERROR(ctx->GetAttr("num_partitions", &num_partitions));
+      int partition_axis;
+      TF_RETURN_IF_ERROR(ctx->GetAttr("partition_axis", &partition_axis));
+
+      ShapeHandle unused;
+      // sp_values
+      TF_RETURN_IF_ERROR(ctx->WithRank(ctx->input(num_partitions), 1, &unused));
+      // sp_indices
+      TF_RETURN_IF_ERROR(
+          ctx->WithRank(ctx->input(num_partitions + 1), 2, &unused));
+      DimensionHandle unused_dim;
+      TF_RETURN_IF_ERROR(ctx->WithValue(ctx->Dim(unused, 1), 2, &unused_dim));
+      // sp_dense_shape
+      TF_RETURN_IF_ERROR(
+          ctx->WithRank(ctx->input(num_partitions + 2), 1, &unused));
+
+      // partition_shapes
+      for (int i = 0; i < num_partitions; i++) {
+        ShapeHandle partition_shape;
+        TF_RETURN_IF_ERROR(ctx->WithRank(ctx->input(i), 1, &partition_shape));
+        TF_RETURN_IF_ERROR(
+            ctx->WithValue(ctx->NumElements(partition_shape), 2, &unused_dim));
+
+        ShapeHandle values_result_shape, indices_result_shape;
+        if (int(partition_axis) == 0) {
+          values_result_shape = ctx->MakeShape({ctx->UnknownDim()});
+          indices_result_shape = ctx->MakeShape({ctx->UnknownDim(), 2});
+        } else {
+          return errors::InvalidArgument("partition_axis > 0 not implemented!");
+        }
+        ctx->set_output(i, values_result_shape);
+        ctx->set_output(i + num_partitions, indices_result_shape);
+      }
+      ctx->set_output(2 * num_partitions, ctx->MakeShape({ctx->UnknownDim()}));
+
+      return Status::OK();
+    });
+//     .Doc(R"doc(
+// A fused embedding op, usually using for partitioned and distriuted embedding variables.
+// FusedEmbeddingSparsePreLookUp, FusedEmbeddingSparsePostLookUp should be used together.
+// This op will first read the partition pattern of embedding variables through partition_shapes,
+// then sort, re-calculate and assign the embedding indices to the corresponding partition. Several Gather ops
+// usually should be appended after this op to gather embedding shards from multiple partitioned embedding
+// variables. This op has no gradient function.
+//     )doc");
+
 // weight: weight table after gather
 // weight_id: indice for gathered weight
 REGISTER_OP("FusedSafeEmbeddingLookupSparse")

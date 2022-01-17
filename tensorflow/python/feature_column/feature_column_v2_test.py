@@ -53,7 +53,7 @@ def print_ops(sess, op_name):
 
 class EmbeddingColumnTest(test.TestCase):
   
-  def _get_model(self, do_fusion=False):
+  def _get_model(self, ev_enable=False, do_fusion=False):
     with ops.name_scope("embedding"):
         features = {
             'colors': [
@@ -64,8 +64,12 @@ class EmbeddingColumnTest(test.TestCase):
                         ['green','','','','','','','']
                     ]
             }
-        hash_bucket = fc.categorical_column_with_hash_bucket(key='colors', hash_bucket_size=10)
-        embedding_column = fc.embedding_column(hash_bucket, dimension=4, do_fusion=do_fusion, combiner='sum')
+        hash_bucket = None
+        if ev_enable:
+          hash_bucket = fc.categorical_column_with_embedding(key='colors')
+        else:
+          hash_bucket = fc.categorical_column_with_hash_bucket(key='colors', hash_bucket_size=10)
+        embedding_column = fc.embedding_column(hash_bucket, dimension=4, do_fusion=do_fusion, combiner='mean')
         _input = fc_old.input_layer(features, [embedding_column])
 
     labels = constant_op.constant(1.0, shape=[5, 4], dtype=float)
@@ -78,33 +82,33 @@ class EmbeddingColumnTest(test.TestCase):
 
     return train_op, loss_op
 
-  def _base_model(self, do_fusion=False, check_tensor=[]):
+  def _base_model(self, ev_enable=False, do_fusion=False, check_tensor=[]):
     with ops.Graph().as_default() as graph:
-        random_seed.set_random_seed(2021)
+      random_seed.set_random_seed(2021)
 
-        train_op, loss_op = self._get_model(do_fusion=do_fusion)
-        with _initialized_session(graph=graph) as sess:
-            _check_list = []
+      train_op, loss_op = self._get_model(ev_enable=ev_enable, do_fusion=do_fusion)
+      with _initialized_session(graph=graph) as sess:
+          _check_list = []
 
-            common_tensor = [
-                # "gradients/input_layer/colors_embedding/Reshape_grad/Reshape",
-                # "input_layer/colors_embedding/embedding_weights/read",
-                # "embedding/input_layer/concat/concat",
-                "embedding/input_layer/colors_embedding/Reshape",
-                # "embedding/input_layer/colors_embedding/lookup",
-                # "optimizer/Adagrad/update_input_layer/colors_embedding/embedding_weights/UnsortedSegmentSum",
-                # "optimizer/Adagrad/update_input_layer/colors_embedding/embedding_weights/SparseApplyAdagrad",
-            ]
-            for _op_name in common_tensor:
-                _check_list.append(print_ops(sess, _op_name))
-                
-            for _op_name in check_tensor:
-                _check_list.append(print_ops(sess, _op_name))
+          common_tensor = [
+              # "gradients/input_layer/colors_embedding/Reshape_grad/Reshape",
+              # "input_layer/colors_embedding/embedding_weights/read",
+              # "embedding/input_layer/concat/concat",
+              "embedding/input_layer/colors_embedding/Reshape",
+              # "embedding/input_layer/colors_embedding/lookup",
+              # "optimizer/Adagrad/update_input_layer/colors_embedding/embedding_weights/UnsortedSegmentSum",
+              # "optimizer/Adagrad/update_input_layer/colors_embedding/embedding_weights/SparseApplyAdagrad",
+          ]
+          for _op_name in common_tensor:
+              _check_list.append(print_ops(sess, _op_name))
+              
+          for _op_name in check_tensor:
+              _check_list.append(print_ops(sess, _op_name))
 
-            for i in range(10):
-              # print(sess.run([*_check_list]))
-              print(sess.run([train_op, loss_op]))
-              # print(sess.run([*_check_list]))
+          for i in range(3):
+            # print(sess.run([*_check_list]))
+            print(sess.run([train_op, loss_op]))
+            # print(sess.run([*_check_list]))
     pass
 
   @test_util.run_deprecated_v1
@@ -114,7 +118,16 @@ class EmbeddingColumnTest(test.TestCase):
             # "optimizer/gradients/embedding/input_layer/colors_embedding/colors_embedding_weights/embedding_lookup_sparse/embedding_lookup_grad/Reshape",
             # "embedding/input_layer/colors_embedding/colors_embedding_weights/embedding_lookup_sparse/UniqueWithCounts",
         ]
-    self._base_model(check_tensor=check_tensor)
+    self._base_model(ev_enable=False, do_fusion=False, check_tensor=check_tensor)
+
+  @test_util.run_deprecated_v1
+  def test_fusion_embedding_origin_with_EV(self):
+    check_tensor = [
+            # "input_layer/colors_embedding/colors_embedding_weights/embedding_lookup_sparse/embedding_lookup",
+            # "optimizer/gradients/embedding/input_layer/colors_embedding/colors_embedding_weights/embedding_lookup_sparse/embedding_lookup_grad/Reshape",
+            # "embedding/input_layer/colors_embedding/colors_embedding_weights/embedding_lookup_sparse/UniqueWithCounts",
+        ]
+    self._base_model(ev_enable=True, do_fusion=False, check_tensor=check_tensor)
 
   @test_util.run_deprecated_v1
   def test_fusion_embedding_fusion(self):
@@ -124,7 +137,17 @@ class EmbeddingColumnTest(test.TestCase):
             # "optimizer/Adagrad/update_input_layer/colors_embedding/embedding_weights/SparseApplyAdagrad",
             # "embedding/input_layer/colors_embedding/colors_embedding_weights/FusedSafeEmbeddingLookupSparse",
         ]
-    self._base_model(True, check_tensor=check_tensor)
+    self._base_model(ev_enable=False, do_fusion=True, check_tensor=check_tensor)
+
+  @test_util.run_deprecated_v1
+  def test_fusion_embedding_fusion_with_EV(self):
+    check_tensor = [
+            # "gradients/input_layer/colors_embedding/Reshape_grad/Reshape",
+            # "embedding/input_layer/colors_embedding/colors_embedding_weights/FusedSafeEmbeddingLookupSparse",
+            # "optimizer/Adagrad/update_input_layer/colors_embedding/embedding_weights/SparseApplyAdagrad",
+            # "embedding/input_layer/colors_embedding/colors_embedding_weights/FusedSafeEmbeddingLookupSparse",
+        ]
+    self._base_model(ev_enable=True, do_fusion=True, check_tensor=check_tensor)
 
 
 if __name__ == '__main__':
