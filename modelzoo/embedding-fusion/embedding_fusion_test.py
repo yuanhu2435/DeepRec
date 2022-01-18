@@ -197,11 +197,27 @@ def print_ops(sess, op_name, input_dict):
   print(">" * 64)
   for _input in out.inputs:
     print(_input)
-    print(sess.run(_input, feed_dict=input_dict))
+    nums = sess.run(_input, feed_dict=input_dict)
+    if nums.dtype == 'float32':
+      for num in nums:
+        for n in num:
+          print("%.28f, "%n, end='')
+        print("")
+      print("")
+    else:
+      print(nums)
   print("-" * 64)
   for _output in out.outputs:
     print(_output)
-    print(sess.run(_output, feed_dict=input_dict))
+    nums = sess.run(_output, feed_dict=input_dict)
+    if nums.dtype == 'float32':
+      for num in nums:
+        for n in num:
+          print("%.28f, "%n, end='')
+        print("")
+      print("")
+    else:
+      print(nums)
   print("<" * 64, "\n")
 
 
@@ -241,7 +257,7 @@ def main():
   data = list(data)
 
   embedding_column = 4
-  combiner = 'mean'
+  combiner = 'sum'
   inputs, train_op = get_model(data, embedding_column, combiner)
   init_global = tf.global_variables_initializer()
   init_local = tf.local_variables_initializer()
