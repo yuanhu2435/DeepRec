@@ -127,7 +127,7 @@ class FusedEmbeddingSparsePreLookUpCPU : public OpKernel {
         fill_empty_row_p_seg_ = default_id < extras * (ids_per_partition + 1) ?
                   default_id / (ids_per_partition + 1) :
                   (default_id - extras) / ids_per_partition;
-        fill_empty_row_p_val_ = p_seg < extras ?
+        fill_empty_row_p_val_ = fill_empty_row_p_seg_ < extras ?
                   default_id % (ids_per_partition + 1) :
                   (default_id - extras) % ids_per_partition;
       }
