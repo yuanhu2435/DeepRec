@@ -18,6 +18,7 @@ from tensorflow.python.ops.gen_fused_embedding_ops import fused_embedding_sparse
 from tensorflow.python.ops.gen_fused_embedding_ops import fused_safe_embedding_lookup_sparse_local
 from tensorflow.python.ops.gen_fused_embedding_ops import fused_safe_embedding_lookup_sparse_local_grad
 
+from tensorflow.python.ops.gen_fused_embedding_ops import fused_safe_embedding_pre_lookup
 from tensorflow.python.ops.gen_fused_embedding_ops import fused_safe_embedding_lookup_sparse
 from tensorflow.python.ops.gen_fused_embedding_ops import fused_safe_embedding_lookup_sparse_grad
 
@@ -148,11 +149,12 @@ def fused_embedding_lookup_sparse_cpu(params,
   with ops.name_scope(name, "fused_embedding_lookup_sparse",
                       params + [sp_ids]) as name:
     partitioned_values, partitioned_indices, \
-      row_empty_and_invalid_flags = fused_embedding_sparse_pre_look_up(
+      row_empty_and_invalid_flags = fused_safe_embedding_pre_lookup(
           partition_shapes=partition_shapes,
           sp_values=sp_ids.values,
           sp_indices=sp_ids.indices,
           sp_dense_shape=sp_ids.dense_shape,
+          partition_strategy=partition_strategy,
           fill_empty_row=True,
           default_id=default_id,
           prune_invalid_id=bool(prune_invalid_ids)
@@ -164,7 +166,7 @@ def fused_embedding_lookup_sparse_cpu(params,
       with ops.colocate_with(param):
         shard = array_ops.gather(param, sub_partition_values)
         emb_shards.append(shard)
-    emb_vectors, _ = fused_embedding_sparse_post_look_up(
+    emb_vectors, _ = fused_safe_embedding_lookup_sparse(
       emb_shards=emb_shards, partitioned_indices=partitioned_indices,
       sp_dense_shape=sp_ids.dense_shape,
       row_empty_and_invalid_flags=row_empty_and_invalid_flags,
