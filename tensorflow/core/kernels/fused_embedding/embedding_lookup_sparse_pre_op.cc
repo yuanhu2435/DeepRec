@@ -33,7 +33,7 @@ class FusedEmbeddingSparsePreLookUpCPU : public OpKernel {
   void Compute(OpKernelContext* ctx) override {
 
     const int64_t default_id = default_id_ >= 0 ? default_id_ : 0;
-    // 1. bind inputs
+    // 1. get input tensor
     Tensor const* values_tensor = nullptr;
     OP_REQUIRES_OK(ctx, ctx->input("sp_values", &values_tensor));
     const int64_t nnz = values_tensor->shape().dim_size(0);
@@ -54,17 +54,29 @@ class FusedEmbeddingSparsePreLookUpCPU : public OpKernel {
     OpInputList partition_shapes;
     OP_REQUIRES_OK(ctx, ctx->input_list("partition_shapes", &partition_shapes));
 
-    partition_sizes_accumulate_.clear();
+    partition_total_sizes_ = 0;
     for (const Tensor& shape : partition_shapes) {
       OP_REQUIRES(ctx, shape.dims() <= 2,
                   errors::InvalidArgument(
                       "input partition_shapes must all less than rank 2"));
-      const int64_t accu = partition_sizes_accumulate_.empty()
-                               ? shape.flat<int64>().data()[0]
-                               : shape.flat<int64>().data()[0] +
-                                     partition_sizes_accumulate_.back();
-      partition_sizes_accumulate_.push_back(accu);
+      partition_total_sizes_ += shape.flat<int64>().data()[0];
     }
+
+    // 1.1 define output tensors
+    OpOutputList partitioned_values;
+    OP_REQUIRES_OK(ctx,
+                   ctx->output_list("partitioned_values", &partitioned_values));
+    OpOutputList partitioned_indices;
+    OP_REQUIRES_OK(
+        ctx, ctx->output_list("partitioned_indices", &partitioned_indices));
+
+    Tensor* all_flags;
+    OP_REQUIRES_OK(
+        ctx, ctx->allocate_output(2 * num_partitions_,
+                                  TensorShape{batch_size + nnz}, &all_flags));
+    int32_t* all_flags_list = all_flags->flat<int32_t>().data();
+
+    memset(all_flags_list, 0, (batch_size + nnz) * sizeof(int32_t));
 
     // 2.1 get index
     std::set<int64_t> indices_set;
@@ -77,22 +89,22 @@ class FusedEmbeddingSparsePreLookUpCPU : public OpKernel {
     int64_t p_seg = 0;
     int64_t p_val = 0;
     int64_t tmp_value = 0;
-    const int64_t total_size = partition_sizes_accumulate_.back();
-    const int64_t ids_per_partition = total_size / num_partitions_;
-    const int64_t extras = total_size % num_partitions_;
+    const int64_t ids_per_partition = partition_total_sizes_ / num_partitions_;
+    const int64_t extras = partition_total_sizes_ % num_partitions_;
 
     for (int64_t origin_index = 0; origin_index < nnz; ++origin_index) {
       tmp_value = values[origin_index];
       if (tmp_value < 0){
+        all_flags_list[batch_size + origin_index] = 0;
         if(prune_invalid_id_) continue;
         p_seg = 0;
         p_val = tmp_value;
       } else {
+        all_flags_list[batch_size + origin_index] = 1;
         if(partition_strategy_ == "mod"){
           p_seg = tmp_value % num_partitions_;
           p_val = tmp_value / num_partitions_;
-        }
-        if(partition_strategy_ == "div"){
+        } else if(partition_strategy_ == "div"){
           p_seg = tmp_value < extras * (ids_per_partition + 1) ?
                     tmp_value / (ids_per_partition + 1) :
                     (tmp_value - extras) / ids_per_partition;
@@ -105,37 +117,30 @@ class FusedEmbeddingSparsePreLookUpCPU : public OpKernel {
       new_index_[p_seg].push_back({origin_index, p_val});
       indices_set.insert(indices[origin_index].row);
     }
-    
-    for (int64_t origin_index = 0; fill_empty_row_ && origin_index < batch_size; ++origin_index){
-      if(indices_set.count(origin_index)) continue;
 
-      tmp_value = default_id;
+    if (fill_empty_row_){
+      // get default id p_seg_ and p_val_
       if(partition_strategy_ == "mod"){
-        fill_empty_row_p_seg_ = tmp_value % num_partitions_;
-        fill_empty_row_p_val_ = tmp_value / num_partitions_;
-      }
-      if(partition_strategy_ == "div"){
-        fill_empty_row_p_seg_ = tmp_value < extras * (ids_per_partition + 1) ?
-                  tmp_value / (ids_per_partition + 1) :
-                  (tmp_value - extras) / ids_per_partition;
+        fill_empty_row_p_seg_ = default_id % num_partitions_;
+        fill_empty_row_p_val_ = default_id / num_partitions_;
+      } else if(partition_strategy_ == "div"){
+        fill_empty_row_p_seg_ = default_id < extras * (ids_per_partition + 1) ?
+                  default_id / (ids_per_partition + 1) :
+                  (default_id - extras) / ids_per_partition;
         fill_empty_row_p_val_ = p_seg < extras ?
-                  tmp_value % (ids_per_partition + 1) :
-                  (tmp_value - extras) % ids_per_partition;
+                  default_id % (ids_per_partition + 1) :
+                  (default_id - extras) % ids_per_partition;
       }
 
-      fill_empty_row_index_.push_back({origin_index, 0});
+      for (int64_t origin_index = 0; origin_index < batch_size; ++origin_index){
+        if(indices_set.count(origin_index)){
+          all_flags_list[origin_index] = 0;
+          continue;
+        }
+        all_flags_list[origin_index] = 1;
+        fill_empty_row_index_.push_back({origin_index, 0});
+      }
     }
-
-    // std::cout << "fill_empty_row_p_val_ = " << fill_empty_row_p_val_ << std::endl;
-    // std::cout << "fill_empty_row_p_seg_ = " << fill_empty_row_p_seg_ << std::endl;
-
-    OpOutputList partitioned_values;
-    OP_REQUIRES_OK(ctx,
-                   ctx->output_list("partitioned_values", &partitioned_values));
-    OpOutputList partitioned_indices;
-    OP_REQUIRES_OK(
-        ctx, ctx->output_list("partitioned_indices", &partitioned_indices));
-    
 
     for (int i = 0; i < num_partitions_; ++i) {
       int64_t size = new_index_[i].size();
@@ -176,14 +181,12 @@ class FusedEmbeddingSparsePreLookUpCPU : public OpKernel {
 
  private:
   int num_partitions_;
+  int partition_total_sizes_;
   int partition_axis_;
   bool fill_empty_row_;
   bool prune_invalid_id_;
   int64_t default_id_;
   std::string partition_strategy_;
-  std::vector<int64_t> partition_sizes_accumulate_;
-  std::vector<int64_t> invalid_ids_list_;
-  std::vector<int64_t> empty_index_list_;
 };
 
 
