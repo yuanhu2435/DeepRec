@@ -92,6 +92,7 @@ class FusedEmbeddingSparsePreLookUpCPU : public OpKernel {
     const int64_t ids_per_partition = partition_total_sizes_ / num_partitions_;
     const int64_t extras = partition_total_sizes_ % num_partitions_;
 
+    // 2.2 get the map of the mutli-table index
     for (int64_t origin_index = 0; origin_index < nnz; ++origin_index) {
       tmp_value = values[origin_index];
       if (tmp_value < 0){
@@ -118,6 +119,7 @@ class FusedEmbeddingSparsePreLookUpCPU : public OpKernel {
       indices_set.insert(indices[origin_index].row);
     }
 
+    // 2.3 fill_empty_row_index_
     if (fill_empty_row_){
       // get default id p_seg_ and p_val_
       if(partition_strategy_ == "mod"){
@@ -142,6 +144,7 @@ class FusedEmbeddingSparsePreLookUpCPU : public OpKernel {
       }
     }
 
+    // 3 packaging the output tensor
     for (int i = 0; i < num_partitions_; ++i) {
       int64_t size = new_index_[i].size();
       if (fill_empty_row_ && i == fill_empty_row_p_seg_){
