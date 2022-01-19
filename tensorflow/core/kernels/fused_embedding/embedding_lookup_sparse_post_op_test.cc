@@ -29,7 +29,7 @@ namespace tensorflow {
 namespace {
 
 enum class Device { CPU, GPU };
-class FusedEmbeddingSparsePostLookUpOpTest : public OpsTestBase {
+class FusedSafeEmbeddingPostLookupOpTest : public OpsTestBase {
  protected:
   void MakeOpAndSetDevice(Device device, int num_partitions, DataType dtype,
                           const std::string& combiner, const float max_norm,
@@ -40,8 +40,8 @@ class FusedEmbeddingSparsePostLookUpOpTest : public OpsTestBase {
                     "GPU", {}, "/job:a/replica:0/task:0")));
     }
 
-    TF_EXPECT_OK(NodeDefBuilder("fused_embedding_sparse_post_look_up",
-                                "FusedEmbeddingSparsePostLookUp")
+    TF_EXPECT_OK(NodeDefBuilder("fused_safe_embedding_post_look_up",
+                                "FusedSafeEmbeddingPostLookup")
                      .Attr("T", dtype)
                      .Attr("num_partitions", num_partitions)
                      .Attr("partition_axis", 0)
@@ -58,7 +58,7 @@ class FusedEmbeddingSparsePostLookUpOpTest : public OpsTestBase {
   }
 };
 
-TEST_F(FusedEmbeddingSparsePostLookUpOpTest,
+TEST_F(FusedSafeEmbeddingPostLookupOpTest,
        Partition3_Sqrtn_MaxNorm200_Float) {
   const int nnz = 10;
   const int batch_size = 4;
@@ -123,7 +123,7 @@ TEST_F(FusedEmbeddingSparsePostLookUpOpTest,
   }
 }
 
-TEST_F(FusedEmbeddingSparsePostLookUpOpTest, Partition2_Sum_No_Default) {
+TEST_F(FusedSafeEmbeddingPostLookupOpTest, Partition2_Sum_No_Default) {
   const int nnz = 3;
   const int batch_size = 3;
   const int emb_vector_dim = 4;
@@ -166,7 +166,7 @@ TEST_F(FusedEmbeddingSparsePostLookUpOpTest, Partition2_Sum_No_Default) {
   }
 }
 
-TEST_F(FusedEmbeddingSparsePostLookUpOpTest, Partition2_Sum_Default_0) {
+TEST_F(FusedSafeEmbeddingPostLookupOpTest, Partition2_Sum_Default_0) {
   const int nnz = 3;
   const int batch_size = 3;
   const int emb_vector_dim = 4;
