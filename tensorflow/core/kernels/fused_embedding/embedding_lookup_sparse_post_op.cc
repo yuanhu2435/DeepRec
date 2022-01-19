@@ -118,52 +118,87 @@ namespace {
 
     template<typename T>
     static void row_add(std::map<T *, std::vector<const T *>> &mapSet, int64 row_nums) {
-      #define L(n) srcs[index + n][row]
+
       for (auto it = mapSet.begin(); it != mapSet.end(); ++it){
         T * dst = it->first;
         std::vector<const T *> srcs(std::move(it->second));
         int64 src_size = srcs.size();
+
+        for (int row = 0; row < row_nums; ++row){
+          dst[row] = 0.0;
+          for (int index = 0; index < src_size; ++index) {
+            dst[row] += srcs[index][row];
+          }
+        }
+      }
+    }
+
+    template<typename T>
+    static void row_add_mean(std::map<T *, std::vector<const T *>> &mapSet, int64 row_nums, bool is_mean) {
+
+#define L(n) srcs[index + n][row]
+
+      for (auto it = mapSet.begin(); it != mapSet.end(); ++it){
+        T * dst = it->first;
+        std::vector<const T *> srcs(std::move(it->second));
+        int64 src_size = srcs.size();
+
+        if (src_size==1){
+          for (int row = 0; row < row_nums; ++row){
+            dst[row] = srcs[0][row];
+          }
+          continue;
+        }
+
         float sum_tmp = 0.0;
         int64 index = 0;
         int64 r = (src_size) % 8;
+        int64 m = 1;
+        if (src_size < 10 && is_mean) m = src_size;
 
         for (int row = 0; row < row_nums; ++row){
           sum_tmp = 0.0;
           index = 0;
           dst[row] = 0.0;
           switch (r) {
-            case 1: {
-              dst[row] = L(0);
-              break;
-            }
             case 2: {
-              sum_tmp = L(0) + L(1);
+              sum_tmp = (L(0) + L(1)) / m;
               dst[row] = sum_tmp;
               break;
             }
             case 3: {
-              sum_tmp = L(0) + L(1) + L(2);
+              sum_tmp = (L(0) + L(1) + L(2)) / m;
               dst[row] = sum_tmp;
               break;
             }
             case 4: {
-              sum_tmp = L(0) + L(1) + L(2) + L(3);
+              sum_tmp = (L(0) + L(1) + L(2) + L(3)) / m;
               dst[row] = sum_tmp;
               break;
             }
             case 5: {
-              sum_tmp = L(0) + L(1) + L(2) + L(3) + L(4);
+              sum_tmp = (L(0) + L(1) + L(2) + L(3) + L(4)) / m;
               dst[row] = sum_tmp;
               break;
             }
             case 6: {
-              sum_tmp = L(0) + L(1) + L(2) + L(3) + L(4) + L(5);
+              sum_tmp = (L(0) + L(1) + L(2) + L(3) + L(4) + L(5)) / m;
               dst[row] = sum_tmp;
               break;
             }
             case 7: {
-              sum_tmp = L(0) + L(1) + L(2) + L(3) + L(4) + L(5) + L(6);
+              sum_tmp = (L(0) + L(1) + L(2) + L(3) + L(4) + L(5) + L(6)) / m;
               dst[row] = sum_tmp;
+              break;
+            }
+            case 0: {
+              dst[row] = (L(0) + L(1) + L(2) + L(3) + L(4) + L(5) + L(6) + L(7)) / m;
+              index += 8;
+              break;
+            }
+            case 1: {
+              dst[row] = (L(0) + L(1) + L(2) + L(3) + L(4) + L(5) + L(6) + L(7) + L(8)) / m;
+              index += 8;
               break;
             }
           }
@@ -171,6 +206,7 @@ namespace {
             sum_tmp = L(0) + L(1) + L(2) + L(3) + L(4) + L(5) + L(6) + L(7);
             dst[row] += sum_tmp;
           }
+          if (src_size >= 10 && is_mean) dst[row] /= src_size;
         }
       }
     }
@@ -210,14 +246,15 @@ namespace {
         mapSet[&output[index]].push_back(&embedding_table[id * embedding_size]);
       }
 
-      row_add(mapSet, embedding_size);
+      // row_add(mapSet, embedding_size);
+      row_add_mean(mapSet, embedding_size, is_mean);
 
       for (int i = 0; i < rows; ++i) {
         if (row_values[i] == 0) {
           memset(&output[i * embedding_size], 0, embedding_size * sizeof(float));
-        } else if (is_mean && row_values[i] > 1) {
-          float factor = 1.0f / row_values[i];
-          myscale(&output[i * embedding_size], factor, embedding_size);
+        // } else if (is_mean && row_values[i] > 1) {
+        //   float factor = 1.0f / row_values[i];
+        //   myscale(&output[i * embedding_size], factor, embedding_size);
         }
       }
       delete[] row_values;
@@ -272,7 +309,7 @@ namespace {
         mapSet[&output[index]].push_back(partitioned_embedding_tables(embedding_tables, embedding_size, id));
       }
 
-      row_add(mapSet, embedding_size);
+      row_add_mean(mapSet, embedding_size, operation == SparseSegmentReductionOperation::kMean);
 
       for (int i = 0; i < rows; ++i) {
         // zero emtpy rows
@@ -283,9 +320,10 @@ namespace {
         if (row_values[i] == 0) {
           memset(&output[i * embedding_size], 0, embedding_size * sizeof(float));
         } else if (operation == SparseSegmentReductionOperation::kMean && row_values[i] > 1) {
-          float factor = 1.0f / row_values[i];
-          myscale(&output[i * embedding_size], factor, embedding_size);
+          // float factor = 1.0f / row_values[i];
+          // myscale(&output[i * embedding_size], factor, embedding_size);
         } else if (operation == SparseSegmentReductionOperation::kSqrtN && row_values[i] > 1) {
+          //fixme(marvin): shall we need care the data precision like "mean"? 
           float factor = 1.0f / std::sqrt(row_values[i]);
           myscale(&output[i * embedding_size], factor, embedding_size);
         }
@@ -396,7 +434,6 @@ public:
 
     sparse_partitioned_gather(input_size, indices, indice_dim, batch_size,
             embedding_tables, output, embedding_size, operation_, set_empty_row_zero, empty_row);
-
     set_feature_nums(feature_nums, input_size, indices, indice_dim);
   }
 

@@ -58,14 +58,79 @@ class FusedSafeEmbeddingPostLookupOpTest : public OpsTestBase {
   }
 };
 
+// TEST_F(FusedSafeEmbeddingPostLookupOpTest,
+//        Partition3_Sqrtn_MaxNorm200_Float) {
+//   const int nnz = 10;
+//   const int batch_size = 4;
+//   const int emb_vector_dim = 8;
+//   const int entries = 8;
+
+//   MakeOpAndSetDevice(Device::CPU, 3, DT_FLOAT, "sqrtn", 200.0, -1);
+
+//   // emb_shards
+//   AddInputFromArray<float>(
+//       TensorShape({6, emb_vector_dim}),
+//       {
+//           8.0,  9.0,  10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 24.0, 25.0,
+//           26.0, 27.0, 28.0, 29.0, 30.0, 31.0, 24.0, 25.0, 26.0, 27.0,
+//           28.0, 29.0, 30.0, 31.0, 32.0, 33.0, 34.0, 35.0, 36.0, 37.0,
+//           38.0, 39.0, 32.0, 33.0, 34.0, 35.0, 36.0, 37.0, 38.0, 39.0,
+//           40.0, 41.0, 42.0, 43.0, 44.0, 45.0, 46.0, 47.0,
+//       });
+//   AddInputFromArray<float>(TensorShape({1, emb_vector_dim}),
+//                            {56.0, 57.0, 58.0, 59.0, 60.0, 61.0, 62.0, 63.0});
+//   AddInputFromArray<float>(
+//       TensorShape({3, emb_vector_dim}),
+//       {96.0,  97.0,  98.0,  99.0,  100.0, 101.0, 102.0, 103.0,
+//        96.0,  97.0,  98.0,  99.0,  100.0, 101.0, 102.0, 103.0,
+//        120.0, 121.0, 122.0, 123.0, 124.0, 125.0, 126.0, 127.0});
+
+//   // partitioned_indices
+//   AddInputFromArray<int64>(TensorShape({6, 2}),
+//                            {0, 5, 0, 1, 2, 1, 1, 2, 3, 6, 1, 1});
+//   AddInputFromArray<int64>(TensorShape({1, 2}), {1, 7});
+//   AddInputFromArray<int64>(TensorShape({3, 2}), {2, 4, 2, 7, 3, 0});
+
+//   // sp_dense_shape
+//   AddInputFromArray<int64>(TensorShape({2}), {batch_size, entries});
+
+//   // row_empty_and_invalid_flags
+//   AddInputFromArray<int>(TensorShape({batch_size + nnz}),
+//                          {0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1});
+
+//   TF_ASSERT_OK(RunOpKernel());
+//   TF_EXPECT_OK(device_->Sync());
+
+//   {
+//     Tensor expected_emb_vectors(allocator(), DT_FLOAT,
+//                                 TensorShape({batch_size, emb_vector_dim}));
+//     test::FillValues<float>(
+//         &expected_emb_vectors,
+//         {22.62741661, 24.04163170, 25.45584488,  26.87005806,  28.28427124,
+//          29.69848442, 31.11269951, 32.52691269,  73.90083313,  75.63288879,
+//          77.36493683, 79.09698486, 80.82904053,  82.56108856,  84.29314423,
+//          86.02519226, 92.61308289, 94.01081848,  95.40855408,  96.80628204,
+//          98.20401764, 99.60175323, 100.99948120, 102.39721680, 71.20205688,
+//          72.31395721, 73.42584991, 74.53774261,  75.64963531,  76.76153564,
+//          77.87342834, 78.98532867});
+//     test::ExpectTensorNear<float>(expected_emb_vectors, *GetOutput(0), 1e-4);
+//   }
+//   {
+//     Tensor feature_nums_expected(allocator(), DT_INT32,
+//                                  TensorShape({batch_size}));
+//     test::FillValues<int>(&feature_nums_expected, {2, 3, 3, 2});
+//     test::ExpectTensorEqual<int32>(feature_nums_expected, *GetOutput(1));
+//   }
+// }
+
 TEST_F(FusedSafeEmbeddingPostLookupOpTest,
-       Partition3_Sqrtn_MaxNorm200_Float) {
+       Partition3_Sqrtn_Float) {
   const int nnz = 10;
   const int batch_size = 4;
   const int emb_vector_dim = 8;
   const int entries = 8;
 
-  MakeOpAndSetDevice(Device::CPU, 3, DT_FLOAT, "sqrtn", 200.0, -1);
+  MakeOpAndSetDevice(Device::CPU, 3, DT_FLOAT, "sqrtn", -1.0, -1);
 
   // emb_shards
   AddInputFromArray<float>(
@@ -106,13 +171,14 @@ TEST_F(FusedSafeEmbeddingPostLookupOpTest,
                                 TensorShape({batch_size, emb_vector_dim}));
     test::FillValues<float>(
         &expected_emb_vectors,
-        {22.62741661, 24.04163170, 25.45584488,  26.87005806,  28.28427124,
-         29.69848442, 31.11269951, 32.52691269,  73.90083313,  75.63288879,
-         77.36493683, 79.09698486, 80.82904053,  82.56108856,  84.29314423,
-         86.02519226, 92.61308289, 94.01081848,  95.40855408,  96.80628204,
-         98.20401764, 99.60175323, 100.99948120, 102.39721680, 71.20205688,
-         72.31395721, 73.42584991, 74.53774261,  75.64963531,  76.76153564,
-         77.87342834, 78.98532867});
+        {22.62741661, 24.04162979, 25.45584297, 26.87005806,
+         28.28427124, 29.69848442, 31.11269760, 32.52691269,
+         73.90083313, 75.63288116, 77.36493683, 79.09698486,
+         80.82903290, 82.56108856, 84.29313660, 86.02519226,
+         124.70765686, 126.43970490, 128.17175293, 129.90380859,
+         131.63586426, 133.36790466, 135.09996033, 136.83201599,
+         107.48023224, 108.89443970, 110.30865479, 111.72286987,
+         113.13708496, 114.55130005, 115.96550751, 117.37972260});
     test::ExpectTensorNear<float>(expected_emb_vectors, *GetOutput(0), 1e-4);
   }
   {
