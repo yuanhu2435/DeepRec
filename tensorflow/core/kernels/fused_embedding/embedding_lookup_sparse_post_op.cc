@@ -11,7 +11,7 @@ namespace tensorflow {
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
 
-enum class SparseSegmentReductionOperation { kSum, kMean, kSqrtN };
+enum SparseSegmentReductionOperation { kSum, kMean, kSqrtN };
 
 namespace {
     // input: input tensor value (it sores the id)
@@ -450,5 +450,141 @@ REGISTER_KERNEL_BUILDER(                                        \
     Name("FusedSafeEmbeddingPostLookup")                        \
     .Device(DEVICE_CPU),                                        \
     FusedSafeEmbeddingPostLookupOp<CPUDevice>);
+
+
+template <typename Device>
+class FusedSafeEmbeddingPostLookupGradOp : public OpKernel {
+ public:
+  explicit FusedSafeEmbeddingPostLookupGradOp(OpKernelConstruction* ctx)
+      : OpKernel(ctx) {
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("num_partitions", &num_partitions_));
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("partition_axis", &partition_axis_));
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("combiner", &combiner_));
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("max_norm", &max_norm_));
+    int temp_default_id;
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("default_id", &temp_default_id));
+    default_id_ = int64_t(temp_default_id);
+    if (combiner_ == "sum") {
+      operation_ = SparseSegmentReductionOperation::kSum;
+    } else if (combiner_ == "mean") {
+      operation_ = SparseSegmentReductionOperation::kMean;
+    } else if (combiner_ == "sqrtn") {
+      operation_ = SparseSegmentReductionOperation::kSqrtN;
+    } else {
+      OP_REQUIRES(ctx, false,
+          errors::InvalidArgument("Currently, 'mean', 'sqrtn' and 'sum' are only supported"));
+    }
+  }
+
+  void Compute(OpKernelContext* ctx) override {
+    Tensor const* top_grad_tensor = nullptr;
+    OP_REQUIRES_OK(ctx, ctx->input("top_grad", &top_grad_tensor));
+
+    OpInputList emb_shards;
+    OP_REQUIRES_OK(ctx, ctx->input_list("emb_shards", &emb_shards));
+
+    OpInputList partitioned_indices;
+    OP_REQUIRES_OK(
+        ctx, ctx->input_list("partitioned_indices", &partitioned_indices));
+
+    Tensor const* feature_nums = nullptr;
+    OP_REQUIRES_OK(ctx, ctx->input("feature_nums", &feature_nums));
+
+    Tensor const* row_empty_and_invalid_flags = nullptr;
+    OP_REQUIRES_OK(ctx, ctx->input("row_empty_and_invalid_flags",
+                                   &row_empty_and_invalid_flags));
+
+    OpOutputList grad_shards;
+    OP_REQUIRES_OK(ctx, ctx->output_list("grad_shards", &grad_shards));
+
+    const float *top_grad = top_grad_tensor->flat<float>().data();
+    const int64_t batch_size = top_grad_tensor->shape().dim_size(0);
+    const int64_t emb_vec_size = emb_shards[0].shape().dim_size(1);
+    const int *f_nums = feature_nums->flat<int>().data();
+    const int *empty_row = row_empty_and_invalid_flags->flat<int>().data();
+
+    const bool set_empty_row_zero = default_id_ >= 0;
+
+    for (int i = 0; i < num_partitions_; i++) {
+      const int64_t sub_nnz = partitioned_indices[i].shape().dim_size(0);
+      const int64_t indices_col = partitioned_indices[i].shape().dim_size(1);
+      const int64 *indices = partitioned_indices[i].flat<int64>().data();
+      Tensor* grad_shard;
+      OP_REQUIRES_OK(
+          ctx, grad_shards.allocate(i, TensorShape({sub_nnz, emb_vec_size}),
+                                    &grad_shard));
+      float *grad = grad_shard->flat<float>().data();
+
+      std::vector<float> l2_norm(sub_nnz, 1.0);
+      if (max_norm_ > 0.0) {
+        const float *emb = emb_shards[i].flat<float>().data();
+        for (int j = 0; j < sub_nnz; ++j) {
+          float sum = 0.0;
+          for (int k = 0; k < emb_vec_size; ++k) {
+            sum += emb[j * emb_vec_size + k] * emb[j * emb_vec_size + k];
+          }
+          l2_norm[j] = std::sqrt(sum);
+        }
+      }
+
+      if (operation_ == SparseSegmentReductionOperation::kSum) {
+        for (int j = 0 ; j < sub_nnz; ++j) {
+          int64 idx = indices[j*indices_col];
+          if (set_empty_row_zero == true && empty_row[idx] == 1)
+            memset(&grad[j*emb_vec_size], 0, sizeof(float)*emb_vec_size);
+          else
+            memcpy(&grad[j*emb_vec_size], &top_grad[idx*emb_vec_size], sizeof(float)*emb_vec_size);
+        }
+      }
+      else if (operation_ == SparseSegmentReductionOperation::kMean) {
+        for (int j = 0 ; j < sub_nnz; ++j) {
+          int64 idx = indices[j*indices_col];
+          if (set_empty_row_zero == true && empty_row[idx] == 1)
+            memset(&grad[j*emb_vec_size], 0, sizeof(float)*emb_vec_size);
+          else {
+            for (int k = 0; k < emb_vec_size; ++k) {
+              grad[j*emb_vec_size + k] = top_grad[idx*emb_vec_size + k] / f_nums[idx];
+              if (l2_norm[j] > max_norm_) {
+                grad[j*emb_vec_size + k] *= max_norm_ / l2_norm[j];
+              }
+            }
+          }
+        }
+      }
+      else if (operation_ == SparseSegmentReductionOperation::kSqrtN) {
+        for (int j = 0 ; j < sub_nnz; ++j) {
+          int64 idx = indices[j*indices_col];
+          if (set_empty_row_zero == true && empty_row[idx] == 1)
+            memset(&grad[j*emb_vec_size], 0, sizeof(float)*emb_vec_size);
+          else {
+            for (int k = 0; k < emb_vec_size; ++k) {
+              grad[j*emb_vec_size + k] = top_grad[idx*emb_vec_size + k] / std::sqrt(f_nums[idx]);
+              if (l2_norm[j] > max_norm_) {
+                grad[j*emb_vec_size + k] *= max_norm_ / l2_norm[j];
+              }
+            }
+          }
+        }
+      }
+      else {
+        OP_REQUIRES(ctx, false,
+          errors::InvalidArgument("Currently, 'mean', 'sqrtn' and 'sum' are only supported"));
+      }
+    }
+  }
+
+private:
+  int num_partitions_;
+  int partition_axis_;
+  std::string combiner_;
+  float max_norm_;
+  int64_t default_id_;
+  SparseSegmentReductionOperation operation_;
+};
+
+REGISTER_KERNEL_BUILDER(                                        \
+    Name("FusedSafeEmbeddingPostLookupGrad")                    \
+    .Device(DEVICE_CPU),                                        \
+    FusedSafeEmbeddingPostLookupGradOp<CPUDevice>);
 
 }  // namespace tensorflow
