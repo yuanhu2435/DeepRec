@@ -136,7 +136,7 @@ namespace {
     template<typename T>
     static void row_add_mean(std::map<T *, std::vector<const T *>> &mapSet, int64 row_nums, bool is_mean) {
 
-#define L(n) srcs[index + n][row]
+      #define L(n) srcs[index + n][row]
 
       for (auto it = mapSet.begin(); it != mapSet.end(); ++it){
         T * dst = it->first;
@@ -288,7 +288,8 @@ namespace {
                             int indice_dim, int rows,
                             std::vector<std::tuple<size_t, const float*>> &embedding_tables, float *output,
                             const int64_t embedding_size, SparseSegmentReductionOperation operation,
-                            const bool set_empty_row_zero, const int *empty_row) {
+                            const bool set_empty_row_zero, const int *empty_row,
+                            float max_norm, std::vector<std::tuple<size_t, std::vector<float>>> l2_norm) {
       // Record how many values in each row
       int *row_values = new int[rows];
       memset(row_values, 0, rows * sizeof(int));
@@ -309,6 +310,7 @@ namespace {
         mapSet[&output[index]].push_back(partitioned_embedding_tables(embedding_tables, embedding_size, id));
       }
 
+      // TODO: need to use l2_norm to handle every elements
       row_add_mean(mapSet, embedding_size, operation == SparseSegmentReductionOperation::kMean);
 
       for (int i = 0; i < rows; ++i) {
@@ -420,8 +422,10 @@ public:
 
     std::vector<std::tuple<size_t, const float*>> embedding_tables;
     std::vector<std::tuple<size_t, const int64*>> indices;
+    std::vector<std::tuple<size_t, std::vector<float>>> l2_norm;
     embedding_tables.reserve(num_partitions_);
     indices.reserve(num_partitions_);
+    l2_norm.reserve(num_partitions_);
     for (int i = 0; i < num_partitions_; i++) {
       const size_t sub_nnz = emb_shards[i].shape().dim_size(0);
       OP_REQUIRES(
@@ -430,15 +434,28 @@ public:
               "emb_shard and partitioned_indice dosn't have the same length"));
       embedding_tables.emplace_back(std::make_tuple(sub_nnz, emb_shards[i].flat<float>().data()));
       indices.emplace_back(std::make_tuple(sub_nnz, partitioned_indices[i].flat<int64>().data()));
+
+      if (max_norm_ > 0.0) {
+        const float *emb = emb_shards[i].flat<float>().data();
+        std::vector<float> sub_l2_norm(sub_nnz, 1.0);
+        for (int j = 0; j < sub_nnz; ++j) {
+          float sum = 0.0;
+          for (int k = 0; k < embedding_size; ++k) {
+            sum += emb[j * embedding_size + k] * emb[j * embedding_size + k];
+          }
+          sub_l2_norm[j] = std::sqrt(sum);
+        }
+        l2_norm.push_back(std::make_tuple(sub_nnz, sub_l2_norm));
+      }
     }
 
     sparse_partitioned_gather(input_size, indices, indice_dim, batch_size,
-            embedding_tables, output, embedding_size, operation_, set_empty_row_zero, empty_row);
+            embedding_tables, output, embedding_size, operation_, set_empty_row_zero, empty_row, max_norm_, l2_norm);
     set_feature_nums(feature_nums, input_size, indices, indice_dim);
   }
 
 private:
-int num_partitions_;
+  int num_partitions_;
   int partition_axis_;
   std::string combiner_;
   float max_norm_;
