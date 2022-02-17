@@ -24,6 +24,7 @@ limitations under the License.
 #include "tensorflow/core/platform/test.h"
 #include "tensorflow/core/platform/test_benchmark.h"
 #include "tensorflow/core/public/session.h"
+#include "tensorflow/cc/ops/standard_ops.h"
 
 namespace tensorflow {
 namespace {
@@ -274,6 +275,104 @@ TEST_F(FusedSafeEmbeddingPostLookupOpTest, Partition2_Sum_Default_0) {
     test::ExpectTensorEqual<int32>(feature_nums_expected, *GetOutput(1));
   }
 }
+
+
+
+
+//----------------------------------------------------------------------------//
+// Performance benchmarks are below.                                          //
+//----------------------------------------------------------------------------//
+
+template <typename T>
+void FillValues(Tensor* tensor, gtl::ArraySlice<T> vals) {
+  auto flat = tensor->flat<T>();
+  CHECK_EQ(flat.size(), vals.size());
+  if (flat.size() > 0) {
+    std::copy_n(vals.data(), vals.size(), flat.data());
+  }
+}
+
+template <typename T>
+static Graph* EmbPostOp(const string& kind, int num_partitions, const std::string& combiner,
+                      const float max_norm, const int default_id) {
+  
+  const int nnz = 3;
+  const int batch_size = 3;
+  const int emb_vector_dim = 4;
+  const int entries = 8;
+
+  num_partitions = 2;
+  // combiner = "sum";
+
+  Graph* g = new Graph(OpRegistry::Global());
+  DataType type = DataTypeToEnum<T>::v();
+
+  const bool isDefault = (kind == "Default");
+  string op_name = isDefault ? "FusedEmbeddingSparsePostLookUpOrigin" : "FusedEmbeddingSparsePostLookUp";
+
+  // emb_shards
+  std::vector<NodeBuilder::NodeOut> input_emb_shards;
+  input_emb_shards.reserve(num_partitions);
+  Tensor emb_shards_0(type, TensorShape({2, emb_vector_dim}));
+  FillValues<T>(&emb_shards_0, {1.0, 1.0, 1.0, 1.0, 2.0, 2.0, 2.0, 2.0});
+  Tensor emb_shards_1(type, TensorShape({2, emb_vector_dim}));
+  FillValues<T>(&emb_shards_1, {10.0, 10.0, 10.0, 10.0, 13.0, 13.0, 13.0, 13.0});
+  input_emb_shards.push_back(test::graph::Constant(g, emb_shards_0));
+  input_emb_shards.push_back(test::graph::Constant(g, emb_shards_1));
+
+  // partitioned_indices
+  std::vector<NodeBuilder::NodeOut> partitioned_indices;
+  partitioned_indices.reserve(num_partitions);
+  Tensor partitioned_indice_0(DT_INT64, TensorShape({2, 2}));
+  FillValues<int64>(&partitioned_indice_0, {0, 0, 0, 5});
+  Tensor partitioned_indice_1(DT_INT64, TensorShape({2, 2}));
+  FillValues<int64>(&partitioned_indice_1, {1, 4, 2, 0});
+  partitioned_indices.push_back(test::graph::Constant(g, partitioned_indice_0));
+  partitioned_indices.push_back(test::graph::Constant(g, partitioned_indice_1));
+  
+  // sp_dense_shape
+  Tensor sp_dense_shape(DT_INT64, TensorShape({2}));
+  FillValues<int64>(&sp_dense_shape, {batch_size, entries});
+
+  // row_empty_and_invalid_flags
+  Tensor row_empty_and_invalid_flags(DT_INT32, TensorShape({batch_size + nnz}));
+  FillValues<int>(&row_empty_and_invalid_flags, {0, 0, 1, 1, 1, 1});
+
+  auto nodeBuilder = NodeBuilder(g->NewName("n"), op_name)
+                    .Attr("T", type)
+                    .Attr("num_partitions", num_partitions)
+                    .Attr("partition_axis", 0)
+                    .Attr("combiner", combiner)
+                    .Attr("max_norm", max_norm)
+                    .Attr("default_id", default_id)
+                    .Input(input_emb_shards)
+                    .Input(partitioned_indices)
+                    .Input(test::graph::Constant(g, sp_dense_shape))
+                    .Input(test::graph::Constant(g, row_empty_and_invalid_flags))
+                    .Finalize(g, nullptr);
+  return g;
+}
+
+#define BM_EMB_POST_OP(kind, NP, C, T, DEVICE, NTH)                                    \
+  static void BM_EMB_POST_OP##_##kind##_##NP##_##C##_##T##_##DEVICE##_##NTH(           \
+      int iters) {                                                                     \
+    testing::UseRealTime();                                                            \
+    SessionOptions opts;                                                               \
+    opts.config.set_intra_op_parallelism_threads(NTH);                                 \
+    test::Benchmark(#DEVICE, EmbPostOp<T>(#kind, NP, #C, -1.0, -1), &opts).Run(iters); \
+  }                                                                                    \
+  BENCHMARK(BM_EMB_POST_OP##_##kind##_##NP##_##C##_##T##_##DEVICE##_##NTH);            \
+
+#define BM_EMB_POST_OP_kind(NP, C, NTH)            \
+  BM_EMB_POST_OP(Default, NP, C, float, CPU, NTH); \
+  BM_EMB_POST_OP(OPT, NP, C, float, CPU, NTH);     \
+
+#define BM_EMB_POST_OP_NTH(NP, C) \
+  BM_EMB_POST_OP_kind(NP, C, 1);  \
+  BM_EMB_POST_OP_kind(NP, C, 4);  \
+  BM_EMB_POST_OP_kind(NP, C, 8);  \
+
+BM_EMB_POST_OP_NTH(2, sum);
 
 }  // namespace
 }  // namespace tensorflow

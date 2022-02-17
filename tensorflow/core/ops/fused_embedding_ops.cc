@@ -185,6 +185,110 @@ REGISTER_OP("FusedEmbeddingSparsePostLookUp")
 // embedding indices.
 //     )doc");
 
+//---fixme(marvin): this op just for BM test, delete it after get perfs improve.---//
+REGISTER_OP("FusedEmbeddingSparsePostLookUpOrigin")
+    .Attr("T : {float32}")
+    .Attr("num_partitions: int >= 1 = 1")
+    .Attr("default_id: int = -1")
+    .Attr("partition_axis: int >= 0 = 0")  // for now only support = 0,
+                                           // will consider support = 1
+                                           // if necessary
+    .Attr("combiner: {'sqrtn', 'mean', 'sum'}")
+    .Attr("max_norm: float = -1.0")
+    .Input("emb_shards: num_partitions * T")
+    .Input("partitioned_indices: num_partitions * int64")
+    .Input("sp_dense_shape: int64")
+    .Input("row_empty_and_invalid_flags: int32")
+    .Input(
+        "partitioned_values: num_partitions * int64")  // only for backward use.
+                                                       // actually directly port
+                                                       // to python grad op
+                                                       // output
+    .Output("emb_vectors: T")
+    .Output("feature_nums: int32")
+    .SetShapeFn([](InferenceContext* ctx) {
+      int num_partitions;
+      TF_RETURN_IF_ERROR(ctx->GetAttr("num_partitions", &num_partitions));
+
+      ShapeHandle first_emb_shard_shape;
+      TF_RETURN_IF_ERROR(
+          ctx->WithRank(ctx->input(0), 2, &first_emb_shard_shape));
+
+      ShapeHandle unused;
+      for (int i = 0; i < num_partitions; i++) {
+        // emb_shards
+        TF_RETURN_IF_ERROR(ctx->WithRank(ctx->input(i), 2, &unused));
+        // partitioned_indices
+        TF_RETURN_IF_ERROR(
+            ctx->WithRank(ctx->input(i + num_partitions), 2, &unused));
+        DimensionHandle unused_dim;
+        TF_RETURN_IF_ERROR(ctx->WithValue(ctx->Dim(unused, 1), 2, &unused_dim));
+      }
+      // sp_dense_shape
+      TF_RETURN_IF_ERROR(
+          ctx->WithRank(ctx->input(2 * num_partitions), 1, &unused));
+      // row_empty_and_invalid_flags
+      TF_RETURN_IF_ERROR(
+          ctx->WithRank(ctx->input(2 * num_partitions + 1), 1, &unused));
+
+      DimensionHandle emb_vec_size_dim = ctx->Dim(first_emb_shard_shape, 1);
+      ctx->set_output(0, ctx->MakeShape({ctx->UnknownDim(), emb_vec_size_dim}));
+      ctx->set_output(1, ctx->MakeShape({ctx->UnknownDim()}));
+      return Status::OK();
+    });
+
+REGISTER_OP("FusedEmbeddingSparsePostLookUpOriginGrad")
+    .Attr("T : {float32}")
+    .Attr("num_partitions: int >= 1 = 1")
+    .Attr("partition_axis: int >= 0 = 0")  // for now only support = 0,
+                                           // will consider support = 1
+                                           // if necessary
+    .Attr("default_id: int = -1")
+    .Attr("combiner: {'sqrtn', 'mean', 'sum'}")
+    .Attr("max_norm: float = -1.0")
+    .Input("top_grad: T")
+    .Input("emb_shards: num_partitions * T")
+    .Input("partitioned_indices: num_partitions * int64")
+    .Input("feature_nums: int32")
+    .Input("row_empty_and_invalid_flags: int32")
+    .Output("grad_shards: num_partitions * T")
+    .SetShapeFn([](InferenceContext* ctx) {
+      int num_partitions;
+      TF_RETURN_IF_ERROR(ctx->GetAttr("num_partitions", &num_partitions));
+
+      ShapeHandle unused;
+      ShapeHandle top_grad_shape;
+
+      // top_grad
+      TF_RETURN_IF_ERROR(ctx->WithRank(ctx->input(0), 2, &top_grad_shape));
+      // emb_shards
+      for (int i = 1; i < num_partitions + 1; i++) {
+        TF_RETURN_IF_ERROR(ctx->WithRank(ctx->input(i), 2, &unused));
+      }
+      // partitioned_indices
+      for (int i = num_partitions + 1; i < 2 * num_partitions + 1; i++) {
+        TF_RETURN_IF_ERROR(ctx->WithRank(ctx->input(i), 2, &unused));
+        DimensionHandle unused_dim;
+        TF_RETURN_IF_ERROR(ctx->WithValue(ctx->Dim(unused, 1), 2, &unused_dim));
+      }
+      // feature_nums
+      TF_RETURN_IF_ERROR(
+          ctx->WithRank(ctx->input(2 * num_partitions + 1), 1, &unused));
+      // row_empty_and_invalid_flags
+      TF_RETURN_IF_ERROR(
+          ctx->WithRank(ctx->input(2 * num_partitions + 2), 1, &unused));
+
+      DimensionHandle emb_vec_size_dim = ctx->Dim(top_grad_shape, 1);
+
+      ShapeHandle output_shape =
+          ctx->MakeShape({ctx->UnknownDim(), emb_vec_size_dim});
+      for (int i = 0; i < num_partitions; i++) {
+        ctx->set_output(i, output_shape);
+      }
+      return Status::OK();
+    });
+//---------------------------------------------------------------------------------//
+
 REGISTER_OP("FusedEmbeddingSparsePostLookUpGrad")
     .Attr("T : {float32}")
     .Attr("num_partitions: int >= 1 = 1")

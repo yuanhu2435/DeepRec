@@ -5295,6 +5295,7 @@ tf_kernel_library(
         "fused_embedding/embedding_lookup_sparse_local_op.cc",
         "fused_embedding/embedding_lookup_sparse_pre_op.cc",
         "fused_embedding/embedding_lookup_sparse_post_op.cc",
+        "fused_embedding/embedding_lookup_sparse_post_op_origin.cc",
     ],
     hdrs = ["fused_embedding/embedding_lookup_sparse_op.h"],
     gpu_srcs = [
