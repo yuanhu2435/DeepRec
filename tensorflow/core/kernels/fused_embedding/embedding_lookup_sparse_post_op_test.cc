@@ -338,6 +338,16 @@ static Graph* EmbPostOp(const string& kind, int num_partitions, const std::strin
   Tensor row_empty_and_invalid_flags(DT_INT32, TensorShape({batch_size + nnz}));
   FillValues<int>(&row_empty_and_invalid_flags, {0, 0, 1, 1, 1, 1});
 
+  // row_empty_and_invalid_flags wget 
+  std::vector<NodeBuilder::NodeOut> partitioned_values;
+  partitioned_values.reserve(num_partitions);
+  Tensor partitioned_values_0(DT_INT64, TensorShape({2, 2}));
+  FillValues<int64>(&partitioned_values_0, {0, 0, 0, 5});
+  Tensor partitioned_values_1(DT_INT64, TensorShape({2, 2}));
+  FillValues<int64>(&partitioned_values_1, {1, 4, 2, 0});
+  partitioned_values.push_back(test::graph::Constant(g, partitioned_values_0));
+  partitioned_values.push_back(test::graph::Constant(g, partitioned_values_1));
+
   auto nodeBuilder = NodeBuilder(g->NewName("n"), op_name)
                     .Attr("T", type)
                     .Attr("num_partitions", num_partitions)
@@ -349,7 +359,9 @@ static Graph* EmbPostOp(const string& kind, int num_partitions, const std::strin
                     .Input(partitioned_indices)
                     .Input(test::graph::Constant(g, sp_dense_shape))
                     .Input(test::graph::Constant(g, row_empty_and_invalid_flags))
-                    .Finalize(g, nullptr);
+                    .Input(partitioned_values);
+                    
+  TF_CHECK_OK(nodeBuilder.Finalize(g, nullptr));
   return g;
 }
 
