@@ -164,10 +164,19 @@ def build_feature_cols():
             key,
             hash_bucket_size=INPUT_FEATURES[key]['hash_bucket_size'],
             dtype=tf.string)
-        embedding_column = tf.feature_column.embedding_column(
-            categorical_column,
-            dimension=INPUT_FEATURES[key]['dim'],
-            combiner='mean')
+        if args.tf:
+            embedding_column = tf.feature_column.embedding_column(
+                categorical_column,
+                dimension=INPUT_FEATURES[key]['dim'],
+                initializer=tf.initializers.truncated_normal(seed=2020),
+                combiner=args.combiner)
+        else:
+            embedding_column = tf.feature_column.embedding_column(
+                categorical_column,
+                dimension=INPUT_FEATURES[key]['dim'],
+                initializer=tf.initializers.truncated_normal(seed=2020),
+                combiner=args.combiner,
+                do_fusion=args.fusion)
         if key in USER_COLUMN:
             user_column.append(embedding_column)
         elif key in ITEM_COLUMN:
@@ -251,9 +260,12 @@ class DSSM():
                     with tf.variable_scope(
                             "user_dnn_%d" % layer_id,
                             reuse=tf.AUTO_REUSE) as user_dnn_layer_scope:
-                        user_emb = tf.layers.dense(user_emb,
-                                                   units=num_hidden_units,
-                                                   activation=None)
+                        user_emb = tf.layers.dense(
+                            user_emb,
+                            units=num_hidden_units,
+                            kernel_initializer=tf.glorot_uniform_initializer(
+                                seed=2020),
+                            activation=None)
                         # BN
                         if self.use_bn:
                             user_emb = tf.layers.batch_normalization(
@@ -269,7 +281,10 @@ class DSSM():
                         "user_dnn_%d" % len(self.dnn_hidden_units),
                         reuse=tf.AUTO_REUSE) as user_dnn_layer_scope:
                     user_emb = tf.layers.dense(
-                        user_emb, units=self.dnn_last_hidden_units)
+                        user_emb,
+                        units=self.dnn_last_hidden_units,
+                        kernel_initializer=tf.glorot_uniform_initializer(
+                            seed=2020))
                     add_layer_summary(user_emb, user_dnn_layer_scope.name)
 
             user_emb = tf.cast(user_emb, dtype=tf.float32)
@@ -282,9 +297,12 @@ class DSSM():
                     with tf.variable_scope(
                             "user_dnn_%d" % layer_id,
                             reuse=tf.AUTO_REUSE) as user_dnn_layer_scope:
-                        user_emb = tf.layers.dense(user_emb,
-                                                   units=num_hidden_units,
-                                                   activation=None)
+                        user_emb = tf.layers.dense(
+                            user_emb,
+                            units=num_hidden_units,
+                            kernel_initializer=tf.glorot_uniform_initializer(
+                                seed=2020),
+                            activation=None)
                         # BN
                         if self.use_bn:
                             user_emb = tf.layers.batch_normalization(
@@ -300,7 +318,10 @@ class DSSM():
                         "user_dnn_%d" % len(self.dnn_hidden_units),
                         reuse=tf.AUTO_REUSE) as user_dnn_layer_scope:
                     user_emb = tf.layers.dense(
-                        user_emb, units=self.dnn_last_hidden_units)
+                        user_emb,
+                        units=self.dnn_last_hidden_units,
+                        kernel_initializer=tf.glorot_uniform_initializer(
+                            seed=2020))
                     add_layer_summary(user_emb, user_dnn_layer_scope.name)
 
         # item dnn network
@@ -314,9 +335,12 @@ class DSSM():
                     with tf.variable_scope(
                             "item_dnn_%d" % layer_id,
                             reuse=tf.AUTO_REUSE) as item_dnn_layer_scope:
-                        item_emb = tf.layers.dense(item_emb,
-                                                   units=num_hidden_units,
-                                                   activation=None)
+                        item_emb = tf.layers.dense(
+                            item_emb,
+                            units=num_hidden_units,
+                            kernel_initializer=tf.glorot_uniform_initializer(
+                                seed=2020),
+                            activation=None)
                         # BN
                         if self.use_bn:
                             item_emb = tf.layers.batch_normalization(
@@ -332,7 +356,10 @@ class DSSM():
                         "item_dnn_%d" % len(self.dnn_hidden_units),
                         reuse=tf.AUTO_REUSE) as item_dnn_layer_scope:
                     item_emb = tf.layers.dense(
-                        item_emb, units=self.dnn_last_hidden_units)
+                        item_emb,
+                        units=self.dnn_last_hidden_units,
+                        kernel_initializer=tf.glorot_uniform_initializer(
+                            seed=2020))
                     add_layer_summary(item_emb, item_dnn_layer_scope.name)
 
             item_emb = tf.cast(item_emb, dtype=tf.float32)
@@ -345,9 +372,12 @@ class DSSM():
                     with tf.variable_scope(
                             "item_dnn_%d" % layer_id,
                             reuse=tf.AUTO_REUSE) as item_dnn_layer_scope:
-                        item_emb = tf.layers.dense(item_emb,
-                                                   units=num_hidden_units,
-                                                   activation=None)
+                        item_emb = tf.layers.dense(
+                            item_emb,
+                            units=num_hidden_units,
+                            kernel_initializer=tf.glorot_uniform_initializer(
+                                seed=2020),
+                            activation=None)
                         # BN
                         if self.use_bn:
                             item_emb = tf.layers.batch_normalization(
@@ -363,7 +393,10 @@ class DSSM():
                         "item_dnn_%d" % len(self.dnn_hidden_units),
                         reuse=tf.AUTO_REUSE) as item_dnn_layer_scope:
                     item_emb = tf.layers.dense(
-                        item_emb, units=self.dnn_last_hidden_units)
+                        item_emb,
+                        units=self.dnn_last_hidden_units,
+                        kernel_initializer=tf.glorot_uniform_initializer(
+                            seed=2020))
                     add_layer_summary(item_emb, item_dnn_layer_scope.name)
 
         # norm
@@ -391,7 +424,7 @@ class DSSM():
 
     def optimizer(self):
         loss_func = tf.keras.losses.CategoricalCrossentropy()
-        self.predict = tf.squeeze(self.predict)
+        # self.predict = tf.squeeze(self.predict)
         loss = tf.math.reduce_mean(loss_func(self.label, self.predict))
         tf.summary.scalar('loss', loss)
 
@@ -484,6 +517,16 @@ def get_arg_parser():
                         help='slice size of dense layer partitioner. units KB',
                         type=int,
                         default=0)
+    parser.add_argument('--fusion',
+                        help='embedding fusion, default to closed.',
+                        action='store_true')
+    parser.add_argument("--combiner",
+                        type=str,
+                        choices=["sum", "mean"],
+                        default="sum")
+    parser.add_argument('--tf',
+                        help='tf\'s embeeding',
+                        action='store_true')
     return parser
 
 
@@ -647,6 +690,7 @@ def main(tf_config=None, server=None):
                     print("global_step/sec: %0.4f" % global_step_sec)
                     print("loss = {}, steps = {}, cost time = {:0.2f}s".format(
                         train_loss, _in, cost_time))
+                    print("loss = {}, steps = {}".format(train_loss, _in))
                     start = time.perf_counter()
 
             # eval model

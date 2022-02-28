@@ -94,7 +94,11 @@ def build_feature_cols():
                 dtype=tf.string)
 
             categorical_embedding_column = tf.feature_column.embedding_column(
-                categorical_column, dimension=16, combiner='mean')
+                categorical_column,
+                dimension=16,
+                combiner=args.combiner,
+                initializer=tf.initializers.truncated_normal(seed=2020),
+                do_fusion=args.fusion)
 
             wide_column.append(categorical_embedding_column)
             deep_column.append(categorical_embedding_column)
@@ -146,11 +150,11 @@ class DeepFM():
         self.predict = self.prediction()
         with tf.name_scope('head'):
             self.train_op, self.loss = self.optimizer()
-            self.acc, self.acc_op = tf.metrics.accuracy(labels=self.label,
-                                                        predictions=self.predict)
+            self.acc, self.acc_op = tf.metrics.accuracy(
+                labels=self.label, predictions=self.predict)
             self.auc, self.auc_op = tf.metrics.auc(labels=self.label,
-                                                predictions=self.predict,
-                                                num_thresholds=1000)
+                                                   predictions=self.predict,
+                                                   num_thresholds=1000)
             tf.summary.scalar('eval_acc', self.acc)
             tf.summary.scalar('eval_auc', self.auc)
 
@@ -159,10 +163,13 @@ class DeepFM():
             with tf.variable_scope(layer_name + "_%d" % layer_id,
                                    partitioner=self.dense_layer_partitioner,
                                    reuse=tf.AUTO_REUSE) as dnn_layer_scope:
-                dnn_input = tf.layers.dense(dnn_input,
-                                            units=num_hidden_units,
-                                            activation=tf.nn.relu,
-                                            name=dnn_layer_scope)
+                dnn_input = tf.layers.dense(
+                    dnn_input,
+                    units=num_hidden_units,
+                    activation=tf.nn.relu,
+                    kernel_initializer=tf.glorot_uniform_initializer(
+                        seed=2020),
+                    name=dnn_layer_scope)
                 if self.use_bn:
                     dnn_input = tf.layers.batch_normalization(
                         dnn_input, training=self._is_training, trainable=True)
@@ -218,7 +225,10 @@ class DeepFM():
             with tf.variable_scope('final_dnn'):
                 net = self.dnn(all_input, self.final_hidden_units, 'final_dnn')
 
-        net = tf.layers.dense(net, units=1)
+        net = tf.layers.dense(
+            net,
+            units=1,
+            kernel_initializer=tf.glorot_uniform_initializer(seed=2020))
         net = tf.math.sigmoid(net)
 
         return net
@@ -327,6 +337,13 @@ def get_arg_parser():
                         help='slice size of dense layer partitioner. units KB',
                         type=int,
                         default=0)
+    parser.add_argument('--fusion',
+                        help='embedding fusion, default to closed.',
+                        action='store_true')
+    parser.add_argument("--combiner",
+                        type=str,
+                        choices=["sum", "mean"],
+                        default="sum")
     return parser
 
 
@@ -494,6 +511,7 @@ def main(tf_config=None, server=None):
                     print("global_step/sec: %0.4f" % global_step_sec)
                     print("loss = {}, steps = {}, cost time = {:0.2f}s".format(
                         train_loss, _in, cost_time))
+                    print("loss = {}, steps = {}".format(train_loss, _in))
                     start = time.perf_counter()
 
             # eval model

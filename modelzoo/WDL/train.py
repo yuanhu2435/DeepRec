@@ -164,7 +164,9 @@ def build_feature_cols(train_file_path, test_file_path):
                 tf.feature_column.embedding_column(
                     categorical_column,
                     dimension=EMBEDDING_DIMENSIONS[column_name],
-                    combiner='mean'))
+                    initializer=tf.initializers.truncated_normal(seed=2020),
+                    combiner=args.combiner,
+                    do_fusion=args.fusion))
         else:
             normalizer_fn = None
             i = CONTINUOUS_COLUMNS.index(column_name)
@@ -228,7 +230,8 @@ class WDL():
                     dnn_input,
                     units=num_hidden_units,
                     activation=tf.nn.relu,
-                    kernel_initializer=tf.glorot_uniform_initializer(),
+                    kernel_initializer=tf.glorot_uniform_initializer(
+                        seed=2020),
                     name=dnn_layer_scope)
 
                 add_layer_summary(dnn_input, dnn_layer_scope.name)
@@ -258,10 +261,13 @@ class WDL():
                     with tf.variable_scope(
                             "logits",
                             values=(net, )).keep_weights() as dnn_logits_scope:
-                        dnn_logits = tf.layers.dense(net,
-                                                     units=1,
-                                                     activation=None,
-                                                     name=dnn_logits_scope)
+                        dnn_logits = tf.layers.dense(
+                            net,
+                            units=1,
+                            activation=None,
+                            kernel_initializer=tf.glorot_uniform_initializer(
+                                seed=2020),
+                            name=dnn_logits_scope)
                     add_layer_summary(dnn_logits, dnn_logits_scope.name)
                 dnn_logits = tf.cast(dnn_logits, dtype=tf.float32)
 
@@ -274,10 +280,13 @@ class WDL():
 
                 with tf.variable_scope("logits",
                                        values=(net, )) as dnn_logits_scope:
-                    dnn_logits = tf.layers.dense(net,
-                                                 units=1,
-                                                 activation=None,
-                                                 name=dnn_logits_scope)
+                    dnn_logits = tf.layers.dense(
+                        net,
+                        units=1,
+                        activation=None,
+                        kernel_initializer=tf.glorot_uniform_initializer(
+                            seed=2020),
+                        name=dnn_logits_scope)
                 add_layer_summary(dnn_logits, dnn_logits_scope.name)
 
         self.linear_parent_scope = 'linear'
@@ -407,6 +416,13 @@ def get_arg_parser():
                         help='slice size of dense layer partitioner. units KB',
                         type=int,
                         default=0)
+    parser.add_argument('--fusion',
+                        help='embedding fusion, default to closed.',
+                        action='store_true')
+    parser.add_argument("--combiner",
+                        type=str,
+                        choices=["sum", "mean"],
+                        default="sum")
     return parser
 
 
@@ -572,6 +588,7 @@ def main(tf_config=None, server=None):
                     print("global_step/sec: %0.4f" % global_step_sec)
                     print("loss = {}, steps = {}, cost time = {:0.2f}s".format(
                         train_loss, _in, cost_time))
+                    print("loss = {}, steps = {}".format(train_loss, _in))
                     start = time.perf_counter()
 
             # eval model

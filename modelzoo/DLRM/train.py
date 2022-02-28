@@ -93,9 +93,12 @@ def build_feature_cols():
                 dtype=tf.string)
 
             sparse_column.append(
-                tf.feature_column.embedding_column(categorical_column,
-                                                   dimension=16,
-                                                   combiner='mean'))
+                tf.feature_column.embedding_column(
+                    categorical_column,
+                    dimension=16,
+                    combiner=args.combiner,
+                    initializer=tf.initializers.truncated_normal(seed=2020),
+                    do_fusion=args.fusion))
         else:
             column = tf.feature_column.numeric_column(column_name, shape=(1, ))
             dense_column.append(column)
@@ -130,7 +133,7 @@ class DLRM():
         self.feature = inputs[0]
         self.label = inputs[1]
         self.bf16 = bf16
-        self._is_training=True
+        self._is_training = True
 
         self.interaction_op = interaction_op
         if self.interaction_op not in ['dot', 'cat']:
@@ -190,6 +193,8 @@ class DLRM():
                             dense_inputs,
                             units=num_hidden_units,
                             activation=tf.nn.relu,
+                            kernel_initializer=tf.glorot_uniform_initializer(
+                                seed=2020),
                             name=mlp_bot_hidden_layer_scope)
                         dense_inputs = tf.layers.batch_normalization(
                             dense_inputs,
@@ -210,6 +215,8 @@ class DLRM():
                             dense_inputs,
                             units=num_hidden_units,
                             activation=tf.nn.relu,
+                            kernel_initializer=tf.glorot_uniform_initializer(
+                                seed=2020),
                             name=mlp_bot_hidden_layer_scope)
                         dense_inputs = tf.layers.batch_normalization(
                             dense_inputs,
@@ -240,20 +247,26 @@ class DLRM():
                     with tf.variable_scope(
                             "mlp_top_hiddenlayer_%d" % layer_id,
                             reuse=tf.AUTO_REUSE) as mlp_top_hidden_layer_scope:
-                        net = tf.layers.dense(net,
-                                              units=num_hidden_units,
-                                              activation=tf.nn.relu,
-                                              name=mlp_top_hidden_layer_scope)
+                        net = tf.layers.dense(
+                            net,
+                            units=num_hidden_units,
+                            activation=tf.nn.relu,
+                            kernel_initializer=tf.glorot_uniform_initializer(
+                                seed=2020),
+                            name=mlp_top_hidden_layer_scope)
 
                     add_layer_summary(net, mlp_top_hidden_layer_scope.name)
 
                 with tf.variable_scope(
                         "mlp_top_hiddenlayer_last",
                         reuse=tf.AUTO_REUSE) as mlp_top_hidden_layer_scope:
-                    net = tf.layers.dense(net,
-                                          units=1,
-                                          activation=None,
-                                          name=mlp_top_hidden_layer_scope)
+                    net = tf.layers.dense(
+                        net,
+                        units=1,
+                        activation=None,
+                        kernel_initializer=tf.glorot_uniform_initializer(
+                            seed=2020),
+                        name=mlp_top_hidden_layer_scope)
 
                     # net = tf.cast(net, dtype=tf.float32)
                     net = tf.math.sigmoid(net)
@@ -269,20 +282,26 @@ class DLRM():
                     with tf.variable_scope(
                             "mlp_top_hiddenlayer_%d" % layer_id,
                             reuse=tf.AUTO_REUSE) as mlp_top_hidden_layer_scope:
-                        net = tf.layers.dense(net,
-                                              units=num_hidden_units,
-                                              activation=tf.nn.relu,
-                                              name=mlp_top_hidden_layer_scope)
+                        net = tf.layers.dense(
+                            net,
+                            units=num_hidden_units,
+                            activation=tf.nn.relu,
+                            kernel_initializer=tf.glorot_uniform_initializer(
+                                seed=2020),
+                            name=mlp_top_hidden_layer_scope)
 
                     add_layer_summary(net, mlp_top_hidden_layer_scope.name)
 
                 with tf.variable_scope(
                         "mlp_top_hiddenlayer_last",
                         reuse=tf.AUTO_REUSE) as mlp_top_hidden_layer_scope:
-                    net = tf.layers.dense(net,
-                                          units=1,
-                                          activation=None,
-                                          name=mlp_top_hidden_layer_scope)
+                    net = tf.layers.dense(
+                        net,
+                        units=1,
+                        activation=None,
+                        kernel_initializer=tf.glorot_uniform_initializer(
+                            seed=2020),
+                        name=mlp_top_hidden_layer_scope)
                     net = tf.math.sigmoid(net)
 
                     add_layer_summary(net, mlp_top_hidden_layer_scope.name)
@@ -375,6 +394,13 @@ def get_arg_parser():
                         help='slice size of dense layer partitioner. units KB',
                         type=int,
                         default=0)
+    parser.add_argument('--fusion',
+                        help='embedding fusion, default to closed.',
+                        action='store_true')
+    parser.add_argument("--combiner",
+                        type=str,
+                        choices=["sum", "mean"],
+                        default="sum")
     return parser
 
 
@@ -543,7 +569,7 @@ def main(tf_config=None, server=None):
 
             # eval model
             if not args.no_eval:
-                model._is_training=False
+                model._is_training = False
                 writer = tf.summary.FileWriter(
                     os.path.join(checkpoint_dir, 'eval'))
 
