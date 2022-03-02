@@ -19,32 +19,31 @@ class WDL():
         self.bf16 = False
         self._is_training = True
 
-        self.input_fn()
         self.model_fn()
-        self.train_fn()
-        self.metrics_fn()
+        with tf.name_scope('head'):
+            self.loss_computing()
+            self.train_op_fn()
+            self.metrics_fn()
 
     # used to add summary in tensorboard
-    def add_layer_summary(self,value, tag):
+    def add_layer_summary(self, value, tag):
         tf.summary.scalar('%s/fraction_of_zero_values' % tag,
                           tf.nn.zero_fraction(value))
         tf.summary.histogram('%s/activation' % tag, value)
 
-    # process input data
-    def input_fn(self):
-        pass
-
-    # model structure
-    # finally get a probability of predict
+    # create model
     def model_fn(self):
-        self.output = None
-        self.add_layer_summary(self.output)
-        pass
+        self.logits=None
+        self.probability= tf.math.sigmod(self.logits)
+        self.output = tf.round(self.probability)
 
-    # compute loss and define optimizer
-    def train_op(self):
+    # compute loss
+    def loss_computing(self):
+        self.loss=None
+
+    # define optimizer and generate train_op
+    def train_op_fn(self):
         self.train_op = None
-        pass
 
     # compute acc & auc
     def metrics_fn(self):
@@ -73,7 +72,7 @@ class WDL():
 
 
 # generate dataset pipline
-def generate_input_data():
+def input_fn():
     pass
 
 
@@ -118,8 +117,8 @@ def main(tf_config=None, server=None):
     print('Checkpoint directory path')
 
     # create data pipline of train & test dataset
-    train_dataset = generate_input_data()
-    test_dataset = generate_input_data()
+    train_dataset = input_fn()
+    test_dataset = input_fn()
 
     iterator = tf.data.Iterator.from_structure(train_dataset.output_types,
                                                test_dataset.output_shapes)
@@ -163,7 +162,8 @@ def get_arg_parser():
 def generate_cluster_info(TF_CONFIG):
     pass
 
-# Some DeepRec's features are enabled by ENV. 
+
+# Some DeepRec's features are enabled by ENV.
 # This func is used to set ENV and enable these features.
 # A triple quotes comment is used to introduce these features and play an emphasizing role.
 def set_env_for_DeepRec():
@@ -172,7 +172,6 @@ def set_env_for_DeepRec():
         it will be set to AVX512_CORE_AMX to enable Intel CPU's feature.
     '''
     pass
-
 
 
 if __name__ == "__main__":
