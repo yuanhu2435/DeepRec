@@ -21,7 +21,7 @@ class WDL():
 
         self.model_fn()
         with tf.name_scope('head'):
-            self.loss_computing()
+            self.loss_fn()
             self.train_op_fn()
             self.metrics_fn()
 
@@ -33,13 +33,13 @@ class WDL():
 
     # create model
     def model_fn(self):
-        self.logits=None
-        self.probability= tf.math.sigmod(self.logits)
+        self.logits = None
+        self.probability = tf.math.sigmod(self.logits)
         self.output = tf.round(self.probability)
 
     # compute loss
-    def loss_computing(self):
-        self.loss=None
+    def loss_fn(self):
+        self.loss = None
 
     # define optimizer and generate train_op
     def train_op_fn(self):
@@ -50,25 +50,6 @@ class WDL():
         self.acc = None
         self.auc = None
         self.add_layer_summary(self.acc)
-        pass
-
-    def train(self, session, timeline=False, tensorboard=False):
-        self._is_training = True
-        if tensorboard:
-            pass
-        if timeline:
-            pass
-
-        session.run(self.train_op)
-
-    def eval(self, session):
-        self._is_training = False
-        acc, auc = session.run(self.acc, self.auc)
-        return acc, auc
-
-    # save checkpoint
-    def save(self, session):
-        pass
 
 
 # generate dataset pipline
@@ -82,25 +63,29 @@ def build_feature_cols():
 
 
 def train(session, model, dataset, steps):
+    merged = tf.summary.merge_all()
+    options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
+    run_metadata = tf.RunMetadata()
     for _in in 'train steps':
-        if 'tensorborad events':
-            model.train(session, tensorborad=True)
-        elif 'timeline':
-            model.train(session, timeline=True)
-        else:
-            model.train(session)
+        tensorboard_merge = merged if _in == 'save tensorboard' else None
 
-        if 'save checkpoint':
-            model.save(session)
+        session.run(
+            [model.loss, model.train_op, tensorboard_merge],
+            options=options if _in == 'save timeline' else None,
+            run_metadata=run_metadata if _in == 'save timeline' else None)
+
+        # save checkpoint
+        if _in == 'save checkpoint':
+            pass
 
         print('gsteps,loss,steps')
-    pass
 
 
 def eval(session, model, dataset, steps):
-    model.eval()
+    for _in in 'test steps':
+        session.run([model.acc, model.acc_op, model.auc, model.auc_op])
+
     print('AUC,ACC')
-    pass
 
 
 def main(tf_config=None, server=None):
