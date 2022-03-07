@@ -149,33 +149,30 @@ class FusedEmbeddingSparsePreLookUpCPU : public OpKernel {
     const int64_t idsPerPartition = partition_total_sizes_ / num_partitions_;
     const int64_t extras = partition_total_sizes_ % num_partitions_;
 
-    std::set<int64_t> indices_set;
     std::vector<std::vector<IndicePair>> new_index_(num_partitions_, std::vector<IndicePair>(0));
 
-    std::vector<IndicePair> fill_empty_row_index_;
     int64_t fill_empty_row_p_seg_ = 0;
     int64_t fill_empty_row_p_val_ = 0;
-
     int64_t p_seg = 0;
     int64_t p_val = 0;
     int64_t tmp_value = 0;
 
     // 2.2 get the map of the mutli-table index
-    for (int64_t origin_index = 0; origin_index < nnz; ++origin_index) {
-      tmp_value = values[origin_index];
+    for (int64_t index = 0; index < nnz; ++index) {
+      tmp_value = values[index];
       if (tmp_value < 0){
-        all_flags_list[batch_size + origin_index] = 0;
+        all_flags_list[batch_size + index] = 0;
         if(prune_invalid_id_) continue;
         p_seg = 0;
         p_val = tmp_value;
       } else {
-        all_flags_list[batch_size + origin_index] = 1;
+        all_flags_list[batch_size + index] = 1;
         partition_strategy_(tmp_value, num_partitions_,
           partition_total_sizes_, idsPerPartition, extras, p_seg, p_val);
         }
       
-      new_index_[p_seg].push_back({origin_index, p_val});
-      indices_set.insert(indices[origin_index].row);
+      new_index_[p_seg].push_back({index, p_val});
+      ++all_flags_list[indices[index].row];
     }
     
     ShowLog(start, "// 2.2 get the map of the mutli-table index");
@@ -188,12 +185,12 @@ class FusedEmbeddingSparsePreLookUpCPU : public OpKernel {
         fill_empty_row_p_seg_, fill_empty_row_p_val_);
 
       for (int64_t origin_index = 0; origin_index < batch_size; ++origin_index){
-        if(indices_set.count(origin_index)){
-          // all_flags_list[origin_index] = 0;
+        if(all_flags_list[origin_index]){
+          all_flags_list[origin_index] = 0;
           continue;
         }
         all_flags_list[origin_index] = 1;
-        fill_empty_row_index_.push_back({origin_index, 0});
+        new_index_[fill_empty_row_p_seg_].push_back({origin_index, -1});
       }
     }
     
@@ -202,9 +199,6 @@ class FusedEmbeddingSparsePreLookUpCPU : public OpKernel {
     // 3 packaging the output tensor
     for (int i = 0; i < num_partitions_; ++i) {
       int64_t size = new_index_[i].size();
-      if (fill_empty_row_ && i == fill_empty_row_p_seg_){
-        size += fill_empty_row_index_.size();
-      }
 
       Tensor* sub_partitioned_values;
       OP_REQUIRES_OK(ctx, partitioned_values.allocate(
@@ -220,18 +214,15 @@ class FusedEmbeddingSparsePreLookUpCPU : public OpKernel {
 
       IndicePair* sub_partitioned_indices_data = reinterpret_cast<IndicePair*>(
                                   sub_partitioned_indices->flat<int64>().data());
-
       if (!size) continue;
 
       for (int j = 0; j < new_index_[i].size(); ++j){
-        sub_partitioned_values_data[j] = new_index_[i][j].column;
-        sub_partitioned_indices_data[j] = indices[new_index_[i][j].row];
-      }
-
-      if (fill_empty_row_ && i == fill_empty_row_p_seg_){
-        for (int j = 0, l = new_index_[i].size(); j < fill_empty_row_index_.size(); ++j, ++l){
-          sub_partitioned_values_data[l] = fill_empty_row_p_val_;
-          sub_partitioned_indices_data[l] = fill_empty_row_index_[j];
+        if(fill_empty_row_ && new_index_[i][j].column == -1){
+          sub_partitioned_values_data[j] = fill_empty_row_p_val_;
+          sub_partitioned_indices_data[j] = {new_index_[i][j].row, 0};
+        } else {
+          sub_partitioned_values_data[j] = new_index_[i][j].column;
+          sub_partitioned_indices_data[j] = indices[new_index_[i][j].row];
         }
       }
     }

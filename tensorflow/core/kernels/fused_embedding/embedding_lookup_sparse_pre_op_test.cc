@@ -63,9 +63,9 @@ class FusedEmbeddingSparsePreLookUpOpTest : public OpsTestBase {
 TEST_F(FusedEmbeddingSparsePreLookUpOpTest, Partition3_Int64) {
 
   int num_partitions = 4;
-  int batch_size = 1024;
+  int batch_size = 10000;
   int num_per_part = batch_size / num_partitions;
-  int embed_dim = 32;
+  int embed_dim = 16;
   int default_id = -1;
 
   std::vector<int64> sp_values;
@@ -132,7 +132,7 @@ TEST_F(FusedEmbeddingSparsePreLookUpOpTest, Partition3_Int64) {
 //   // partition_shapes 0
 //   AddInputFromArray<int64>(TensorShape({2}), {5, 8});
 //   // partition_shapes 1
-//   AddInputFromArray<int64>(TensorShape({2}), {5, 8});
+//   AddInputFromArray<int64>(TensorShape({2}), {5, 8}); 
 
 //   // sp_values
 //   AddInputFromArray<int64>(TensorShape({10}),
@@ -142,7 +142,7 @@ TEST_F(FusedEmbeddingSparsePreLookUpOpTest, Partition3_Int64) {
 //   // sp_indices
 //   AddInputFromArray<int64>(
 //       TensorShape({10, 2}),
-//       {0, 0, 0, 4, 1, 2, 3, 0, 3, 4, 
+//       {0, 0, 0, 4, 1, 2, 3, 0, 3, 4,
 //        4, 0, 5, 2, 6, 0, 6, 1, 6, 7});
 
 //   // sp_dense_shape
