@@ -14,51 +14,51 @@ LABEL_COLUMN = ["clicked"]
 
 class WDL():
     def __init__(self):
-        self.label = None
-        self.feature = None
+        self._label = None
+        self._feature = None
         self.bf16 = False
         self._is_training = True
 
-        self.model_fn()
+        self._create_model()
         with tf.name_scope('head'):
-            self.loss_fn()
-            self.train_op_fn()
-            self.metrics_fn()
+            self._create_loss()
+            self._create_optimizer()
+            self._create_metrics()
 
     # used to add summary in tensorboard
-    def add_layer_summary(self, value, tag):
+    def _add_layer_summary(self, value, tag):
         tf.summary.scalar('%s/fraction_of_zero_values' % tag,
                           tf.nn.zero_fraction(value))
         tf.summary.histogram('%s/activation' % tag, value)
 
     # create model
-    def model_fn(self):
+    def _create_model(self):
         self.logits = None
         self.probability = tf.math.sigmod(self.logits)
         self.output = tf.round(self.probability)
 
     # compute loss
-    def loss_fn(self):
+    def _create_loss(self):
         self.loss = None
 
     # define optimizer and generate train_op
-    def optimizer_fn(self):
+    def _create_optimizer(self):
         self.train_op = None
 
     # compute acc & auc
-    def metrics_fn(self):
+    def _create_metrics(self):
         self.acc = None
         self.auc = None
-        self.add_layer_summary(self.acc)
+        self._add_layer_summary(self.acc)
 
 
 # generate dataset pipline
-def input_fn():
+def build_model_input():
     pass
 
 
 # generate feature columns
-def build_feature_cols():
+def build_feature_columns():
     pass
 
 
@@ -102,8 +102,8 @@ def main(tf_config=None, server=None):
     print('Checkpoint directory path')
 
     # create data pipline of train & test dataset
-    train_dataset = input_fn()
-    test_dataset = input_fn()
+    train_dataset = build_model_input()
+    test_dataset = build_model_input()
 
     iterator = tf.data.Iterator.from_structure(train_dataset.output_types,
                                                test_dataset.output_shapes)
@@ -113,7 +113,7 @@ def main(tf_config=None, server=None):
     test_init_op = iterator.make_initializer(test_dataset)
 
     # create feature column
-    feature_column = build_feature_cols()
+    feature_column = build_feature_columns()
 
     # create variable partitioner for distributed training
     num_ps_replicas = len(tf_config['ps_hosts']) if tf_config else 0
