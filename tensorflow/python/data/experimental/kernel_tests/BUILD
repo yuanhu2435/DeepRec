@@ -100,6 +100,29 @@ py_test(
 )
 
 py_test(
+    name = "parquet_dataset_ops_test",
+    size = "medium",
+    srcs = ["parquet_dataset_ops_test.py"],
+    python_version = "PY2",
+    srcs_version = "PY2AND3",
+    tags = ["no_pip"],
+    deps = [
+        "//tensorflow/python:client_testlib",
+        "//tensorflow/python:constant_op",
+        "//tensorflow/python:dtypes",
+        "//tensorflow/python:errors",
+        "//tensorflow/python:framework_test_lib",
+        "//tensorflow/python:parsing_ops",
+        "//tensorflow/python/data/experimental/ops:parquet_dataset_ops",
+        "//tensorflow/python/data/experimental/ops:error_ops",
+        "//tensorflow/python/data/experimental/ops:readers",
+        "//tensorflow/python/data/kernel_tests:test_base",
+        "//tensorflow/python/data/ops:readers",
+        "//tensorflow/python/eager:context",
+    ],
+)
+
+py_test(
     name = "dense_to_sparse_batch_test",
     srcs = ["dense_to_sparse_batch_test.py"],
     python_version = "PY2",

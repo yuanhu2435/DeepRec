@@ -1263,6 +1263,7 @@ tf_kernel_library(
 tf_kernel_library(
     name = "data",
     deps = [
+        ":parquet_dataset_ops",
         ":batch_dataset_op",
         ":cache_dataset_ops",
         ":concatenate_dataset_op",
@@ -1364,4 +1365,44 @@ tf_kernel_library(
         "//tensorflow/core:lib",
         "//tensorflow/core:lib_internal",
     ],
+)
+
+cc_library(
+    name = "parquet_dataset_ops",
+    srcs = [
+        "arrow_kernels.cc",
+        "arrow_kernels.h",
+        "arrow_stream_client.h",
+        "parquet_dataset_ops.cc",
+    ] + select({
+        "@bazel_tools//src/conditions:windows": [
+            "arrow_stream_client_windows.cc",
+        ],
+        "//conditions:default": [
+            "arrow_stream_client_unix.cc",
+        ],
+    }),
+    hdrs = ["io_stream.h",
+            "io_interface.h",
+            "io_kernel.h"],
+    linkstatic = True,
+    deps = [
+        ":arrow_util",
+        ":dataset_ops",
+        "//tensorflow/core:framework",
+        "@arrow",
+    ],
+    alwayslink = 1,
+)
+
+cc_library(
+    name = "arrow_util",
+    srcs = ["arrow_util.cc"],
+    hdrs = ["arrow_util.h"],
+    linkstatic = True,
+    deps = [
+        ":dataset_ops",
+        "@arrow",
+    ],
+    alwayslink = 1,
 )
