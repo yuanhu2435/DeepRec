@@ -59,7 +59,7 @@ template <typename T>
 void ShowLog(const std::chrono::time_point<T>& start, const std::string& msg = "") {
   static int index = 0;
   auto end = std::chrono::high_resolution_clock::now();
-  VLOG(1) << ">>> index=" << index++ << " time="
+  VLOG(1) << ">>> index=" << index++ << " time= "
             << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() << " us; message=" << msg;
 }
 }
@@ -148,9 +148,11 @@ class FusedEmbeddingSparsePreLookUpCPU : public OpKernel {
     // 2.1 get index
     const int64_t idsPerPartition = partition_total_sizes_ / num_partitions_;
     const int64_t extras = partition_total_sizes_ % num_partitions_;
+    std::vector<IndicePair> empty_index_;
+    int64_t* id_index_array = new int64_t[num_partitions_ + nnz * 2];
+    memset(id_index_array, 0, (num_partitions_ + nnz * 2) * sizeof(int64_t));
 
-    std::vector<std::vector<IndicePair>> new_index_(num_partitions_, std::vector<IndicePair>(0));
-
+    ShowLog(start, "// 1.2 memset output");
     int64_t fill_empty_row_p_seg_ = 0;
     int64_t fill_empty_row_p_val_ = 0;
     int64_t p_seg = 0;
@@ -158,23 +160,29 @@ class FusedEmbeddingSparsePreLookUpCPU : public OpKernel {
     int64_t tmp_value = 0;
 
     // 2.2 get the map of the mutli-table index
-    for (int64_t index = 0; index < nnz; ++index) {
+    for (int64_t index = 0, id_index = num_partitions_; index < nnz; ++index, ++id_index) {
       tmp_value = values[index];
       if (tmp_value < 0){
         all_flags_list[batch_size + index] = 0;
-        if(prune_invalid_id_) continue;
-        p_seg = 0;
-        p_val = tmp_value;
+        if (prune_invalid_id_){
+          p_seg = -1;
+          p_val = tmp_value;
+        } else {
+          p_seg = 0;
+          p_val = tmp_value;
+          ++id_index_array[p_seg];
+          ++all_flags_list[indices[index].row];
+        }
       } else {
         all_flags_list[batch_size + index] = 1;
+        ++all_flags_list[indices[index].row];
         partition_strategy_(tmp_value, num_partitions_,
           partition_total_sizes_, idsPerPartition, extras, p_seg, p_val);
-        }
-      
-      new_index_[p_seg].push_back({index, p_val});
-      ++all_flags_list[indices[index].row];
+        ++id_index_array[p_seg];
+      }
+      id_index_array[id_index] = p_seg;
+      id_index_array[id_index + nnz] = p_val;
     }
-    
     ShowLog(start, "// 2.2 get the map of the mutli-table index");
 
     // 2.3 fill_empty_row_index_
@@ -190,15 +198,17 @@ class FusedEmbeddingSparsePreLookUpCPU : public OpKernel {
           continue;
         }
         all_flags_list[origin_index] = 1;
-        new_index_[fill_empty_row_p_seg_].push_back({origin_index, -1});
+        empty_index_.push_back({origin_index, 0});
       }
     }
-    
     ShowLog(start, "// 2.3 fill_empty_row_index_");
 
     // 3 packaging the output tensor
     for (int i = 0; i < num_partitions_; ++i) {
-      int64_t size = new_index_[i].size();
+      int64_t size = id_index_array[i];
+      if(fill_empty_row_ && i == fill_empty_row_p_seg_){
+        size += empty_index_.size();
+      }
 
       Tensor* sub_partitioned_values;
       OP_REQUIRES_OK(ctx, partitioned_values.allocate(
@@ -215,18 +225,26 @@ class FusedEmbeddingSparsePreLookUpCPU : public OpKernel {
       IndicePair* sub_partitioned_indices_data = reinterpret_cast<IndicePair*>(
                                   sub_partitioned_indices->flat<int64>().data());
       if (!size) continue;
-
-      for (int j = 0; j < new_index_[i].size(); ++j){
-        if(fill_empty_row_ && new_index_[i][j].column == -1){
-          sub_partitioned_values_data[j] = fill_empty_row_p_val_;
-          sub_partitioned_indices_data[j] = {new_index_[i][j].row, 0};
-        } else {
-          sub_partitioned_values_data[j] = new_index_[i][j].column;
-          sub_partitioned_indices_data[j] = indices[new_index_[i][j].row];
+      
+      int sub_partitioned_index = 0;
+      for (int index = 0; index < nnz; ++index){
+        if (id_index_array[index + num_partitions_] == i){
+          sub_partitioned_values_data[sub_partitioned_index] = id_index_array[index + num_partitions_ + nnz];
+          sub_partitioned_indices_data[sub_partitioned_index] = indices[index];
+          ++sub_partitioned_index;
         }
+      }
+      if(fill_empty_row_ && fill_empty_row_p_seg_ == i){
+        memcpy(sub_partitioned_indices_data + sub_partitioned_index,
+          empty_index_.data(), empty_index_.size() * sizeof(IndicePair));
+
+        std::fill(sub_partitioned_values_data + sub_partitioned_index,
+          sub_partitioned_values_data + size, fill_empty_row_p_val_);
       }
     }
     ShowLog(start, "// 3 packaging the output tensor");
+    delete[] id_index_array;
+    ShowLog(start, "// 4 delete array");
   }
 
  private:
