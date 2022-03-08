@@ -42,7 +42,7 @@ class WDL():
         self.loss = None
 
     # define optimizer and generate train_op
-    def train_op_fn(self):
+    def optimizer_fn(self):
         self.train_op = None
 
     # compute acc & auc
