@@ -21,45 +21,63 @@ enum Part_Strategy {
   DIV
 };
 
-typedef void (*PARTITIONALGO)(const int64_t, const int64_t, const int64_t,
-                              const int64_t, const int64_t, int64_t&, int64_t&);
+typedef void (*PARTITIONALGO)(const int64_t, const int64_t,
+                              const int64_t, const int64_t,
+                              const int64_t, const int64_t,
+                              const int64_t, int64_t&, int64_t&);
 
 template <Part_Strategy PS>
-void GetPartitionIndex(const int64_t originId, const int64_t numPartitions,
-                       const int64_t totalSize, const int64_t idsPerPartition,
-                       const int64_t extras, int64_t& segment, int64_t& newId){
+inline void GetPartitionIndex(const int64_t numPartitions, const int64_t totalSize,
+                       const int64_t idsPerPartition, const int64_t extras,
+                       const int64_t idsPerPartitionPlus, const int64_t idSubxtras,
+                       const int64_t originId, int64_t& segment, int64_t& newId){
   // OP_REQUIRES(ctx, false,
   //   errors::InvalidArgument("GetPartitionIndex not support undefine type. ", T));
   //todo(marvin): show the error info.
 }
 
 template <>
-void GetPartitionIndex<Part_Strategy::MOD>(const int64_t originId,
+inline void GetPartitionIndex<Part_Strategy::MOD>(
                         const int64_t numPartitions, const int64_t totalSize,
                         const int64_t idsPerPartition, const int64_t extras,
-                        int64_t& segment, int64_t& newId){
+                        const int64_t idsPerPartitionPlus, const int64_t idSubxtras,
+                        const int64_t originId, int64_t& segment, int64_t& newId){
   segment = originId % numPartitions;
   newId = originId / numPartitions;
 }
 
 template <>
-void GetPartitionIndex<Part_Strategy::DIV>(const int64_t originId,
+inline void GetPartitionIndex<Part_Strategy::DIV>(
                         const int64_t numPartitions, const int64_t totalSize,
                         const int64_t idsPerPartition, const int64_t extras,
-                        int64_t& segment, int64_t& newId){
-  segment = originId < extras * (idsPerPartition + 1) ?
-            originId / (idsPerPartition + 1) :
-            (originId - extras) / idsPerPartition;
-  newId = segment < extras ?
-            originId % (idsPerPartition + 1) :
-            (originId - extras) % idsPerPartition;
+                        const int64_t idsPerPartitionPlus, const int64_t idSubxtras,
+                        const int64_t originId, int64_t& segment, int64_t& newId){
+  // segment = originId < extras * (idsPerPartition + 1) ?
+  //           originId / (idsPerPartition + 1) :
+  //           (originId - extras) / idsPerPartition;
+  // newId = segment < extras ?
+  //           originId % (idsPerPartition + 1) :
+  //           (originId - extras) % idsPerPartition;
+
+  register int64_t p_seg_0, p_seg_1, p_val_0, p_val_1;
+  register bool x, y;
+
+  p_seg_0 = originId / idsPerPartitionPlus;
+  p_seg_1 = idSubxtras / idsPerPartition;
+
+  p_val_0 = originId % idsPerPartitionPlus;
+  p_val_1 = idSubxtras % idsPerPartition;
+
+  x = extras && !(originId / (extras * idsPerPartitionPlus));
+  segment = x * p_seg_0 + !x * p_seg_1;
+  y = extras && !((x * p_seg_0 + !x * p_seg_1) / extras);
+  newId = y * p_val_0 + !y * p_val_1;
 }
 
 template <typename T>
 void ShowLog(const std::chrono::time_point<T>& start, const std::string& msg = "") {
-  static int index = 0;
   auto end = std::chrono::high_resolution_clock::now();
-  VLOG(1) << ">>> index=" << index++ << " time= "
+  VLOG(1) << ">>>" << " time= "
             << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() << " us; message=" << msg;
 }
 }
@@ -78,11 +96,10 @@ class FusedEmbeddingSparsePreLookUpCPU : public OpKernel {
     int temp_default_id;
     OP_REQUIRES_OK(ctx, ctx->GetAttr("default_id", &temp_default_id));
     default_id_ = int64_t(temp_default_id);
-    std::string partition_strategy;
-    OP_REQUIRES_OK(ctx, ctx->GetAttr("partition_strategy", &partition_strategy));
-    if(partition_strategy == "div"){
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("partition_strategy", &partition_strategy_str_));
+    if(partition_strategy_str_ == "div"){
       partition_strategy_ = GetPartitionIndex<Part_Strategy::DIV>;
-    } else if(partition_strategy == "mod"){
+    } else if(partition_strategy_str_ == "mod"){
       partition_strategy_ = GetPartitionIndex<Part_Strategy::MOD>;
     } else {
       OP_REQUIRES(ctx, false,
@@ -147,23 +164,26 @@ class FusedEmbeddingSparsePreLookUpCPU : public OpKernel {
 
     // 2.1 get index
     const int64_t idsPerPartition = partition_total_sizes_ / num_partitions_;
+    const int64_t idsPerPartitionPlus = idsPerPartition + 1;
     const int64_t extras = partition_total_sizes_ % num_partitions_;
     std::vector<IndicePair> empty_index_;
     int64_t* id_index_array = new int64_t[num_partitions_ + nnz * 2];
-    memset(id_index_array, 0, (num_partitions_ + nnz * 2) * sizeof(int64_t));
-
+    // memset(id_index_array, 0, (num_partitions_ + nnz * 2) * sizeof(int64_t));
+    memset(id_index_array, 0, (num_partitions_) * sizeof(int64_t));
     ShowLog(start, "// 1.2 memset output");
     int64_t fill_empty_row_p_seg_ = 0;
     int64_t fill_empty_row_p_val_ = 0;
     int64_t p_seg = 0;
     int64_t p_val = 0;
-    int64_t tmp_value = 0;
 
     // 2.2 get the map of the mutli-table index
+#ifdef __AVX512F__
+
+#else
+    register int64_t tmp_value;
     for (int64_t index = 0, id_index = num_partitions_; index < nnz; ++index, ++id_index) {
       tmp_value = values[index];
       if (tmp_value < 0){
-        all_flags_list[batch_size + index] = 0;
         if (prune_invalid_id_){
           p_seg = -1;
           p_val = tmp_value;
@@ -176,21 +196,26 @@ class FusedEmbeddingSparsePreLookUpCPU : public OpKernel {
       } else {
         all_flags_list[batch_size + index] = 1;
         ++all_flags_list[indices[index].row];
-        partition_strategy_(tmp_value, num_partitions_,
-          partition_total_sizes_, idsPerPartition, extras, p_seg, p_val);
+        //fixme(marvin): How to use macro the instead of the func call?
+        partition_strategy_(num_partitions_, partition_total_sizes_,
+                            idsPerPartition, extras,
+                            idsPerPartitionPlus, tmp_value - extras,
+                            tmp_value, p_seg, p_val);
         ++id_index_array[p_seg];
       }
       id_index_array[id_index] = p_seg;
       id_index_array[id_index + nnz] = p_val;
     }
+#endif
     ShowLog(start, "// 2.2 get the map of the mutli-table index");
 
     // 2.3 fill_empty_row_index_
     if (fill_empty_row_){
       // get default id p_seg_ and p_val_
-      partition_strategy_(default_id, num_partitions_,
-        partition_total_sizes_, idsPerPartition, extras,
-        fill_empty_row_p_seg_, fill_empty_row_p_val_);
+      partition_strategy_(num_partitions_, partition_total_sizes_,
+                          idsPerPartition, extras, idsPerPartitionPlus,
+                          default_id - extras, default_id,
+                          fill_empty_row_p_seg_, fill_empty_row_p_val_);
 
       for (int64_t origin_index = 0; origin_index < batch_size; ++origin_index){
         if(all_flags_list[origin_index]){
@@ -255,6 +280,7 @@ class FusedEmbeddingSparsePreLookUpCPU : public OpKernel {
   bool prune_invalid_id_;
   int64_t default_id_;
   PARTITIONALGO partition_strategy_;
+  std::string partition_strategy_str_;
 };
 
 REGISTER_KERNEL_BUILDER(                                         \
