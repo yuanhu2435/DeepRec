@@ -88,6 +88,7 @@ mkdir -p ${WORKSPACE}/bazel-cache
 # and share the PID namespace (--pid=host) so the process inside does not have
 # pid 1 and SIGKILL is propagated to the process inside (jenkins can kill it).
 sudo docker run --rm --privileged=true --pid=host \
+    -P \
     -v ${WORKSPACE}:${WORKSPACE} \
     -v /home/${CI_BUILD_USER}/.cache:/home/${CI_BUILD_USER}/.cache \
     -v ${BIN_DIR}/bin:/home/${CI_BUILD_USER}/bin \

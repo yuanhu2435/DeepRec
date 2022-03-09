@@ -6,6 +6,7 @@ ARG CI_BUILD_GID
 ARG CI_BUILD_GROUP
 ARG CI_BUILD_UID
 ARG CI_BUILD_USER
+ARG CI_BUILD_PASSWD=qwer1234
 ARG CI_BUILD_HOME=/home/${CI_BUILD_USER}
 
 ENV http_proxy ${http_proxy}
@@ -28,6 +29,7 @@ RUN echo "${CI_BUILD_USER} ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/90-nopasswd-
 
 USER ${CI_BUILD_UID}:${CI_BUILD_GID}
 
+RUN echo ${CI_BUILD_USER}:${CI_BUILD_PASSWD} | sudo chpasswd
 RUN whoami
 
 WORKDIR ${CI_BUILD_HOME}
@@ -40,5 +42,16 @@ RUN sudo ln -s $(which python3) /usr/local/bin/python
 
 RUN sudo -E apt-get install -y \
     vim \
-    numactl
+    numactl \
+    openssh-server \
+    less
 
+EXPOSE 22
+
+RUN sudo mkdir /var/run/sshd
+
+# execute in the container
+RUN echo "sudo /usr/sbin/sshd" >> ${CI_BUILD_HOME}/.bashrc
+
+RUN sudo bash -c "echo 0 >> /proc/sys/kernel/kptr_restrict"
+RUN sudo bash -c "echo 0 >> /proc/sys/kernel/perf_event_paranoid"
