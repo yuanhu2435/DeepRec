@@ -349,7 +349,7 @@ TEST_F(FusedEmbeddingSparsePreLookUpOpTest,
   {
     Tensor expected_values(allocator(), DT_INT64, TensorShape({9}));
     test::FillValues<int64>(&expected_values, {0, 4, 3, 5, 9, 2, 3, 3, 3});
-    test::ExpectTensorEqual<int64>(expected_values, *GetOutput(0));
+    test::ExpectTensorEqual<int64>(expected_values, *GetOutput(0));;
 
     Tensor expected_indices(allocator(), DT_INT64, TensorShape({9, 2}));
     test::FillValues<int64>(&expected_indices, {0, 0, 0, 4, 1, 2, 3, 4, 6, 0, 6,
