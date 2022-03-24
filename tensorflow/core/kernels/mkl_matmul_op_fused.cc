@@ -15,7 +15,7 @@ limitations under the License.
 
 // See docs in ../ops/math_ops.cc.
 
-// This file uses MKL-DNN InnerProduct for acceleration of TF Matrix-Matrix
+// This file uses OneDNN InnerProduct for acceleration of TF Matrix-Matrix
 // Multiplication (MatMul) with bias (BiasAdd) operations.
 #ifdef INTEL_MKL
 
@@ -112,7 +112,7 @@ class MklFusedMatMulOp : public MklDnnMatMulOpBase<T, T> {
         transpose_b_ ? MEMORY_FORMAT::oi : MEMORY_FORMAT::io;
 
     // Set weight format for primitive:
-    //   1. const, let MKL-DNN determine format because it will be cached;
+    //   1. const, let OneDNN determine format because it will be cached;
     //   2. var, keep the original format to avoid reordering.
     MklDnnMatMulFwdParams matmul_params(
         src_dims, weight_dims, bias_dims, dst_dims, src_format,
@@ -126,10 +126,10 @@ class MklFusedMatMulOp : public MklDnnMatMulOpBase<T, T> {
 
     // Allocate output tensor.
     Tensor* dst_tensor = nullptr;
-    std::shared_ptr<mkldnn::inner_product_forward::primitive_desc> matmul_pd =
+    std::shared_ptr<dnnl::inner_product_forward::primitive_desc> matmul_pd =
         matmul_prim->GetPrimitiveDesc();
 
-    // The output shape of MatMul is same both for MKL and TF version.
+    // The output shape of MatMul is same both for OneDNN and TF version.
     // They are all NC format, no matter what's the format of input.
     // And the shape of AddOp is also the same with output's shape.
     auto dst_pd = matmul_pd->PRIMITIVE_DESC_DST;
@@ -221,13 +221,8 @@ class MklFusedMatMulOp : public MklDnnMatMulOpBase<T, T> {
             this->CacheWeight(ctx, matmul_pd, cached_weight_data, weight_tensor,
                               weight_mkl, weight_md);
           }
-#ifdef ENABLE_MKLDNN_V1
           cached_weight_data = this->GetCachedWeight(
               ctx, GET_WEIGHTS_DESC_FROM_OP_PD(matmul_pd));
-#else
-          cached_weight_data = this->GetCachedWeight(
-              ctx, GET_WEIGHTS_DESC_FROM_OP_PD(matmul_pd).desc());
-#endif
         }
 
         // Cache weight may fail when it gets different format in different
@@ -251,7 +246,7 @@ class MklFusedMatMulOp : public MklDnnMatMulOpBase<T, T> {
       // Execute fused matmul op.
       matmul_prim->Execute(src_data, weight_data, bias_data, dst_data,
                            cpu_stream);
-    } catch (mkldnn::error& e) {
+    } catch (dnnl::error& e) {
       string error_msg = "Status: " + std::to_string(e.status) +
                          ", message: " + string(e.message) + ", in file " +
                          string(__FILE__) + ":" + std::to_string(__LINE__);
@@ -296,7 +291,7 @@ class MklFusedMatMulOp : public MklDnnMatMulOpBase<T, T> {
   const int kOutputIndex_Dst = 0;
 };
 
-// Register mkl kernels for supported operations and types.
+// Register OneDNN kernels for supported operations and types.
 #define REGISTER_FUSEDMATMUL_MKL_SUPPORTED_KERNELS_TYPES(type) \
   REGISTER_KERNEL_BUILDER(                                     \
       Name("_MklFusedMatMul")                                  \
@@ -307,7 +302,6 @@ class MklFusedMatMulOp : public MklDnnMatMulOpBase<T, T> {
 TF_CALL_float(REGISTER_FUSEDMATMUL_MKL_SUPPORTED_KERNELS_TYPES);
 TF_CALL_bfloat16(REGISTER_FUSEDMATMUL_MKL_SUPPORTED_KERNELS_TYPES);
 
-#ifdef ENABLE_MKLDNN_V1
 template <typename Device, typename T>
 class MklFusedMatMulGradOp : public OpKernel {
  public:
@@ -394,7 +388,7 @@ class MklFusedMatMulGradOp : public OpKernel {
       MklDnnMatMulBwdFilterPrimitive<T>* matmul_prim =
           MklDnnMatMulBwdFilterPrimitiveFactory<T>::Get(matmul_params);
 
-      std::shared_ptr<mkldnn::inner_product_backward_weights::primitive_desc>
+      std::shared_ptr<dnnl::inner_product_backward_weights::primitive_desc>
           matmul_pd = matmul_prim->GetPrimitiveDesc();
 
       // Has two outputs, 0 for MatMulGradFilter, 1 for BiasAddGrad
@@ -462,7 +456,7 @@ class MklFusedMatMulGradOp : public OpKernel {
       // Execute fused matmul op.
       matmul_prim->Execute(src_data, diff_weight_data, bias_data,
                            diff_dst_data);
-    } catch (mkldnn::error& e) {
+    } catch (dnnl::error& e) {
       string error_msg = "Status: " + std::to_string(e.status) +
                          ", message: " + string(e.message) + ", in file " +
                          string(__FILE__) + ":" + std::to_string(__LINE__);
@@ -511,7 +505,6 @@ class MklFusedMatMulGradOp : public OpKernel {
 
 TF_CALL_float(REGISTER_FUSEDMATMUL_GRAD_TYPES);
 TF_CALL_bfloat16(REGISTER_FUSEDMATMUL_GRAD_TYPES);
-#endif  // ENABLE_MKLDNN_V1
 
 }  // namespace tensorflow
 
