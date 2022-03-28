@@ -80,8 +80,10 @@ static Graph* Matmul(const string& kind, int m, int k, int n, bool transpose_a, 
 
 #define BM_Matmul_NTH(M, K, N, TA, TB, T, DEVICE) \
   BM_Matmul_kind(M, K, N, TA, TB, T, DEVICE, 1);  \
+  BM_Matmul_kind(M, K, N, TA, TB, T, DEVICE, 2);  \
   BM_Matmul_kind(M, K, N, TA, TB, T, DEVICE, 4);  \
   BM_Matmul_kind(M, K, N, TA, TB, T, DEVICE, 8);  \
+  BM_Matmul_kind(M, K, N, TA, TB, T, DEVICE, 16);  \
 
 #define BM_Matmul(M, K, N, TA, TB)               \
   BM_Matmul_NTH(M, K, N, TA, TB, float, cpu);    \
@@ -163,34 +165,62 @@ BM_Matmul(2000, 1, 2000, false, true);
 BM_Matmul(2000, 1, 2000, true, true);
 */
 
-// Vector * Vector
-BM_Matmul(1, 50, 1, false, false);
-BM_Matmul(1, 2000, 1, false, false);
+// DIN
+BM_Matmul(128, 36, 36, false, false);
+BM_Matmul(128, 144, 80, false, false);
+BM_Matmul(128, 80, 40, false, false);
+BM_Matmul(128, 40, 1, false, false);
+BM_Matmul(1, 128, 36, false, false);
+BM_Matmul(128, 162, 200, false, false);
+BM_Matmul(128, 200, 80, false, false);
+BM_Matmul(128, 80, 2, false, false);
+BM_Matmul(128, 2, 1, false, false);
+// DLRM
+BM_Matmul(512, 13, 512, false, false);
+BM_Matmul(512, 512, 256, false, false);
+BM_Matmul(512, 256, 64, false, false);
+BM_Matmul(512, 64, 16, false, false);
+BM_Matmul(512, 432, 512, false, false);
+BM_Matmul(512, 256, 1, false, false);
+// WDL
+BM_Matmul(512, 2198, 1024, false, false);
+BM_Matmul(512, 1024, 512, false, false);
+//DeepFM
+BM_Matmul(512, 429, 1024, false, false);
+BM_Matmul(512, 1024, 256, false, false);
+BM_Matmul(512, 256, 32, false, false);
+BM_Matmul(512, 49, 128, false, false);
+BM_Matmul(512, 128, 64, false, false);
+BM_Matmul(512, 64, 1, false, false);
 
-BM_Matmul(50, 1, 50, false, false);
-BM_Matmul(2000, 1, 2000, false, false);
-
-// Vector * Matrix
-BM_Matmul(1, 50, 50, false, false);
-BM_Matmul(1, 2000, 2000, false, false);
-
-BM_Matmul(50, 50, 1, false, false);
-BM_Matmul(2000, 2000, 1, false, false);
-
-// Matrix * Matrix
-BM_Matmul(32, 32, 32, false, false);
-BM_Matmul(51200, 64, 64, false, false);
-BM_Matmul(8, 512, 512, false, false);
-BM_Matmul(128, 512, 512, false, false);
-BM_Matmul(16, 1024, 1024, false, false);
-BM_Matmul(256, 1024, 1024, false, false);
-BM_Matmul(4096, 4096, 4096, false, false);
-
-BM_Matmul(2560, 64, 1, false, false);
-BM_Matmul(2560, 448, 1, false, false);
-BM_Matmul(2560, 2304, 64, false, false);
-BM_Matmul(2560, 1040, 1536, false, false);
-BM_Matmul(2560, 14435, 2304, false, false);
+//// Vector * Vector
+//BM_Matmul(1, 50, 1, false, false);
+//BM_Matmul(1, 2000, 1, false, false);
+//
+//BM_Matmul(50, 1, 50, false, false);
+//BM_Matmul(2000, 1, 2000, false, false);
+//
+//// Vector * Matrix
+//BM_Matmul(1, 50, 50, false, false);
+//BM_Matmul(1, 2000, 2000, false, false);
+//
+//BM_Matmul(50, 50, 1, false, false);
+//BM_Matmul(2000, 2000, 1, false, false);
+//
+//// Matrix * Matrix
+//BM_Matmul(32, 32, 32, false, false);
+//BM_Matmul(51200, 64, 64, false, false);
+//BM_Matmul(8, 512, 512, false, false);
+//BM_Matmul(128, 512, 512, false, false);
+//BM_Matmul(16, 1024, 1024, false, false);
+//BM_Matmul(256, 1024, 1024, false, false);
+//BM_Matmul(4096, 4096, 4096, false, false);
+//
+//BM_Matmul(2560, 64, 1, false, false);
+//BM_Matmul(2560, 448, 1, false, false);
+//BM_Matmul(2560, 2304, 64, false, false);
+//BM_Matmul(2560, 1040, 1536, false, false);
+//BM_Matmul(2560, 14435, 2304, false, false);
 
 /*
 BM_Matmul(14435, 2560, 2304, true, false);
@@ -292,34 +322,34 @@ static Graph* FusedMatMul(const string& kind, int m, int k, int n,
   BM_FusedMatMul_ACT(M, K, N, TA, TB, float, cpu);    \
   BM_FusedMatMul_ACT(M, K, N, TA, TB, bfloat16, cpu); \
 
-// Vector * Vector
-BM_FusedMatMul(1, 50, 1, false, false);
-BM_FusedMatMul(1, 2000, 1, false, false);
-
-BM_FusedMatMul(50, 1, 50, false, false);
-BM_FusedMatMul(2000, 1, 2000, false, false);
-
-// Vector * Matrix
-BM_FusedMatMul(1, 50, 50, false, false);
-BM_FusedMatMul(1, 2000, 2000, false, false);
-
-BM_FusedMatMul(50, 50, 1, false, false);
-BM_FusedMatMul(2000, 2000, 1, false, false);
-
-// Matrix * Matrix
-BM_FusedMatMul(32, 32, 32, false, false);
-BM_FusedMatMul(51200, 64, 64, false, false);
-BM_FusedMatMul(8, 512, 512, false, false);
-BM_FusedMatMul(128, 512, 512, false, false);
-BM_FusedMatMul(16, 1024, 1024, false, false);
-BM_FusedMatMul(256, 1024, 1024, false, false);
-BM_FusedMatMul(4096, 4096, 4096, false, false);
-
-BM_FusedMatMul(2560, 64, 1, false, false);
-BM_FusedMatMul(2560, 448, 1, false, false);
-BM_FusedMatMul(2560, 2304, 64, false, false);
-BM_FusedMatMul(2560, 1040, 1536, false, false);
-BM_FusedMatMul(2560, 14435, 2304, false, false);
+//// Vector * Vector
+//BM_FusedMatMul(1, 50, 1, false, false);
+//BM_FusedMatMul(1, 2000, 1, false, false);
+//
+//BM_FusedMatMul(50, 1, 50, false, false);
+//BM_FusedMatMul(2000, 1, 2000, false, false);
+//
+//// Vector * Matrix
+//BM_FusedMatMul(1, 50, 50, false, false);
+//BM_FusedMatMul(1, 2000, 2000, false, false);
+//
+//BM_FusedMatMul(50, 50, 1, false, false);
+//BM_FusedMatMul(2000, 2000, 1, false, false);
+//
+//// Matrix * Matrix
+//BM_FusedMatMul(32, 32, 32, false, false);
+//BM_FusedMatMul(51200, 64, 64, false, false);
+//BM_FusedMatMul(8, 512, 512, false, false);
+//BM_FusedMatMul(128, 512, 512, false, false);
+//BM_FusedMatMul(16, 1024, 1024, false, false);
+//BM_FusedMatMul(256, 1024, 1024, false, false);
+//BM_FusedMatMul(4096, 4096, 4096, false, false);
+//
+//BM_FusedMatMul(2560, 64, 1, false, false);
+//BM_FusedMatMul(2560, 448, 1, false, false);
+//BM_FusedMatMul(2560, 2304, 64, false, false);
+//BM_FusedMatMul(2560, 1040, 1536, false, false);
+//BM_FusedMatMul(2560, 14435, 2304, false, false);
 
 }  // end namespace tensorflow
 

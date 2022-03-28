@@ -70,9 +70,9 @@ echo ""
 
 # Build the docker container.
 echo "Building container (${DOCKER_IMG_NAME})..."
-sudo docker build ${DOCKER_USER} ${DOCKER_PROXY} \
-    -t ${DOCKER_IMG_NAME} ${CI_DOCKER_BUILD_EXTRA_PARAMS[@]} \
-    -f "${DOCKERFILE_PATH}" "${DOCKER_CONTEXT_PATH}"
+#sudo docker build ${DOCKER_USER} ${DOCKER_PROXY} \
+#    -t ${DOCKER_IMG_NAME} ${CI_DOCKER_BUILD_EXTRA_PARAMS[@]} \
+#    -f "${DOCKERFILE_PATH}" "${DOCKER_CONTEXT_PATH}"
 
 # Check docker build status
 if [[ $? != "0" ]]; then
@@ -87,8 +87,7 @@ mkdir -p ${WORKSPACE}/bazel-cache
 # By default we cleanup - remove the container once it finish running (--rm)
 # and share the PID namespace (--pid=host) so the process inside does not have
 # pid 1 and SIGKILL is propagated to the process inside (jenkins can kill it).
-sudo docker run --rm --privileged=true --pid=host \
-    -P \
+sudo docker run --net host --rm --privileged=true --pid=host \
     -v ${WORKSPACE}:${WORKSPACE} \
     -v ${WORKSPACE}/bazel-cache:/home/${CI_BUILD_USER}/.cache \
     -v ${BIN_DIR}/bin:/home/${CI_BUILD_USER}/bin \
