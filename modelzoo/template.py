@@ -7,9 +7,9 @@ tf.logging.set_verbosity(tf.logging.INFO)
 print("Using TensorFlow version %s" % (tf.__version__))
 
 # Definition of some constants
-CONTINUOUS_COLUMNS = ["I" + str(i) for i in range(1, 14)]  # 1-13 inclusive
-CATEGORICAL_COLUMNS = ["C" + str(i) for i in range(1, 27)]  # 1-26 inclusive
-LABEL_COLUMN = ["clicked"]
+CONTINUOUS_COLUMNS = ['I' + str(i) for i in range(1, 14)]  # 1-13 inclusive
+CATEGORICAL_COLUMNS = ['C' + str(i) for i in range(1, 27)]  # 1-26 inclusive
+LABEL_COLUMN = ['clicked']
 
 
 class WDL():
@@ -62,28 +62,17 @@ def build_feature_columns():
     pass
 
 
-def train(session, model, dataset, steps):
-    merged = tf.summary.merge_all()
-    options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
-    run_metadata = tf.RunMetadata()
-    for _in in 'train steps':
-        tensorboard_merge = merged if _in == 'save tensorboard' else None
+def train():
+    while not sess.should_stop():
+        sess.run(
+            [model.loss, model.train_op]
 
-        session.run(
-            [model.loss, model.train_op, tensorboard_merge],
-            options=options if _in == 'save timeline' else None,
-            run_metadata=run_metadata if _in == 'save timeline' else None)
-
-        # save checkpoint
-        if _in == 'save checkpoint':
-            pass
-
-        print('gsteps,loss,steps')
+    print('gsteps,loss,steps')
 
 
-def eval(session, model, dataset, steps):
+def eval():
     for _in in 'test steps':
-        session.run([model.acc, model.acc_op, model.auc, model.auc_op])
+        session.run([model.acc_op,model.auc_op])
 
     print('AUC,ACC')
 
@@ -129,11 +118,9 @@ def main(tf_config=None, server=None):
     # Session hook
     hooks = []
 
-    # Session run()
-    with tf.train.MonitoredTrainingSession(hooks=hooks,
-                                           config=sess_config) as sess:
-        train(sess, model, train_init_op, 'train_steps')
-        eval(sess, model, test_init_op, 'test_steps')
+    # Run model training and evaluation
+    train()
+    eval()
 
 
 # Get parse
