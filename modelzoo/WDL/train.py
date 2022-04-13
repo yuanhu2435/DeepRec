@@ -382,7 +382,7 @@ def build_feature_columns():
                 elif args.dynamic_ev:
                     '''Dynamic-dimension Embedding Variable'''
                     print(
-                        "Dynamic-dimension Embedding Variable isn't real enabled in model."
+                        "Dynamic-dimension Embedding Variable isn't really enabled in model."
                     )
                     sys.exit()
 
@@ -449,7 +449,7 @@ def train(sess_config,
         save_incremental_checkpoint_secs=args.incremental_ckpt)`
     '''
     if args.incremental_ckpt and not args.tf:
-        print("Incremental_Checkpoint is not real enabled.")
+        print("Incremental_Checkpoint is not really enabled.")
         print("Please see the comments in the code.")
         sys.exit()
 
@@ -481,7 +481,7 @@ def eval(sess_config, input_hooks, model, data_init_op, steps, checkpoint_dir):
     merged = tf.summary.merge_all()
 
     with tf.train.MonitoredSession(session_creator=session_creator,
-                                   hooks=None) as sess:
+                                   hooks=hooks) as sess:
         for _in in range(1, steps + 1):
             if (_in != steps):
                 sess.run([model.acc_op, model.auc_op])
@@ -569,7 +569,7 @@ def main(tf_config=None, server=None):
 
     if args.smartstaged and not args.tf:
         '''Smart staged Feature'''
-        # next_element = tf.staged(next_element, num_threads=8, capacity=40)
+        next_element = tf.staged(next_element, num_threads=8, capacity=40)
         sess_config.graph_options.optimizer_options.do_smart_stage = True
         hooks.append(tf.make_prefetch_hook())
     if args.op_fusion and not args.tf:
