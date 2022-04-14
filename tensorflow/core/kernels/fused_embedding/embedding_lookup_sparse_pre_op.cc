@@ -167,32 +167,25 @@ class FusedEmbeddingSparsePreLookUpCPU : public OpKernel {
     const int64_t idsPerPartitionPlus = idsPerPartition + 1;
     const int64_t extras = partition_total_sizes_ % num_partitions_;
     std::vector<IndicePair> empty_index_;
-    int64_t* id_index_array = new int64_t[num_partitions_ + nnz * 2];
+    // [[p_seg_nums] + [negative_nums] + p_seg_list + p_id_list]
+    int64_t* const id_index_array = new int64_t[num_partitions_ + 1 + (nnz + 8 - (nnz % 8)) * 2];
     // memset(id_index_array, 0, (num_partitions_ + nnz * 2) * sizeof(int64_t));
-    memset(id_index_array, 0, (num_partitions_) * sizeof(int64_t));
+    memset(id_index_array, 0, (num_partitions_ + 1) * sizeof(int64_t));
     ShowLog(start, "// 1.2 memset output");
     int64_t fill_empty_row_p_seg_ = 0;
     int64_t fill_empty_row_p_val_ = 0;
-    int64_t p_seg = 0;
-    int64_t p_val = 0;
 
     // 2.2 get the map of the mutli-table index
 #ifdef __AVX512F__
-
-#else
+    int64_t p_seg = 0;
+    int64_t p_val = 0;
     register int64_t tmp_value;
-    for (int64_t index = 0, id_index = num_partitions_; index < nnz; ++index, ++id_index) {
+    for (int64_t index = 0, id_index = num_partitions_ + 1; index < nnz; ++index, ++id_index) {
       tmp_value = values[index];
+      p_val = values[index];
       if (tmp_value < 0){
-        if (prune_invalid_id_){
-          p_seg = -1;
-          p_val = tmp_value;
-        } else {
-          p_seg = 0;
-          p_val = tmp_value;
-          ++id_index_array[p_seg];
-          ++all_flags_list[indices[index].row];
-        }
+        p_seg = prune_invalid_id_ ? num_partitions_ : 0;
+        all_flags_list[indices[index].row] += !p_seg;
       } else {
         all_flags_list[batch_size + index] = 1;
         ++all_flags_list[indices[index].row];
@@ -201,13 +194,36 @@ class FusedEmbeddingSparsePreLookUpCPU : public OpKernel {
                             idsPerPartition, extras,
                             idsPerPartitionPlus, tmp_value - extras,
                             tmp_value, p_seg, p_val);
-        ++id_index_array[p_seg];
       }
+      ++id_index_array[p_seg];
+      id_index_array[id_index] = p_seg;
+      id_index_array[id_index + nnz] = p_val;
+    }
+#else
+    int64_t p_seg = 0;
+    int64_t p_val = 0;
+    register int64_t tmp_value;
+    for (int64_t index = 0, id_index = num_partitions_ + 1; index < nnz; ++index, ++id_index) {
+      tmp_value = values[index];
+      p_val = values[index];
+      if (tmp_value < 0){
+        p_seg = prune_invalid_id_ ? num_partitions_ : 0;
+        all_flags_list[indices[index].row] += !p_seg;
+      } else {
+        all_flags_list[batch_size + index] = 1;
+        ++all_flags_list[indices[index].row];
+        //fixme(marvin): How to use macro the instead of the func call?
+        partition_strategy_(num_partitions_, partition_total_sizes_,
+                            idsPerPartition, extras,
+                            idsPerPartitionPlus, tmp_value - extras,
+                            tmp_value, p_seg, p_val);
+      }
+      ++id_index_array[p_seg];
       id_index_array[id_index] = p_seg;
       id_index_array[id_index + nnz] = p_val;
     }
 #endif
-    ShowLog(start, "// 2.2 get the map of the mutli-table index");
+    ShowLog(start, "// 2.2.2 get the map of the mutli-table index");
 
     // 2.3 fill_empty_row_index_
     if (fill_empty_row_){
@@ -253,8 +269,8 @@ class FusedEmbeddingSparsePreLookUpCPU : public OpKernel {
       
       int sub_partitioned_index = 0;
       for (int index = 0; index < nnz; ++index){
-        if (id_index_array[index + num_partitions_] == i){
-          sub_partitioned_values_data[sub_partitioned_index] = id_index_array[index + num_partitions_ + nnz];
+        if (id_index_array[index + num_partitions_ + 1] == i){
+          sub_partitioned_values_data[sub_partitioned_index] = id_index_array[index + num_partitions_ + 1 + nnz];
           sub_partitioned_indices_data[sub_partitioned_index] = indices[index];
           ++sub_partitioned_index;
         }
